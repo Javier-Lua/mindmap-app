@@ -208,6 +208,7 @@ app.post('/api/linker', auth, async (req, res) => {
   const output = await extractor(text, { pooling: 'mean', normalize: true });
   const vector = Array.from(output.data);
   
+  // Cast distance calculation but don't select the embedding column
   const suggestions = await prisma.$queryRaw`
     SELECT id, title, "rawText", (embedding <-> ${vector}::vector) as distance
     FROM "Note"
@@ -219,7 +220,7 @@ app.post('/api/linker', auth, async (req, res) => {
     id: s.id,
     title: s.title,
     reason: `Similar content about "${text.slice(0, 30)}..."`,
-    distance: s.distance
+    distance: parseFloat(s.distance)
   }));
   
   res.json({ suggestions: results });
@@ -306,6 +307,7 @@ app.get('/api/search', auth, async (req, res) => {
   const output = await extractor(query, { pooling: 'mean', normalize: true });
   const vector = Array.from(output.data);
   
+  // Don't select the embedding column, just use it for distance calculation
   const results = await prisma.$queryRaw`
     SELECT id, title, "rawText", (embedding <-> ${vector}::vector) as distance
     FROM "Note"
@@ -313,13 +315,16 @@ app.get('/api/search', auth, async (req, res) => {
     ORDER BY distance ASC
     LIMIT 10`;
   
-  res.json(results);
+  res.json(results.map(r => ({
+    ...r,
+    distance: parseFloat(r.distance)
+  })));
 });
 
 app.post('/api/cluster', auth, async (req, res) => {
-  // Use raw query to get embeddings
+  // Get embeddings as text representation, then parse
   const notes = await prisma.$queryRaw`
-    SELECT id, title, embedding
+    SELECT id, title, embedding::text as embedding_text
     FROM "Note"
     WHERE "userId" = ${req.userId} AND embedding IS NOT NULL
   `;
@@ -328,14 +333,23 @@ app.post('/api/cluster', auth, async (req, res) => {
     return res.json({ message: 'Not enough notes to cluster', clusters: [] });
   }
   
-  const embeddings = notes.map(n => n.embedding);
+  // Parse PostgreSQL vector format: [1,2,3,...] to JavaScript array
+  const embeddings = notes.map(n => {
+    // Remove brackets and split by comma
+    const vectorStr = n.embedding_text.replace(/[\[\]]/g, '');
+    return vectorStr.split(',').map(parseFloat);
+  });
+  
   const numClusters = Math.min(5, Math.floor(embeddings.length / 2));
   const result = kmeans(embeddings, numClusters, { initialization: 'kmeans++' });
   
   const clusters = {};
   result.clusters.forEach((clusterIdx, i) => {
     if (!clusters[clusterIdx]) clusters[clusterIdx] = [];
-    clusters[clusterIdx].push(notes[i]);
+    clusters[clusterIdx].push({
+      id: notes[i].id,
+      title: notes[i].title
+    });
   });
   
   const clusterData = Object.entries(clusters).map(([idx, noteList]) => ({

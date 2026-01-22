@@ -2,9 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import { 
-  Home, Search, Brain, Eye, ToggleLeft, ToggleRight, 
-  Layers, Calendar, RefreshCw, Maximize2, Minimize2,
-  Plus, Trash2, Link as LinkIcon
+  Home, Search, Brain, Eye, Moon, Sun,
+  Layers, Calendar, Maximize2, Minimize2,
+  Plus, Trash2, Edit3, X
 } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
@@ -16,7 +16,6 @@ export default function MessyMap() {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [messyMode, setMessyMode] = useState(true);
   const [focusedNode, setFocusedNode] = useState(null);
   const [clusters, setClusters] = useState([]);
   const [showClusters, setShowClusters] = useState(false);
@@ -33,63 +32,24 @@ export default function MessyMap() {
   const [zoom, setZoom] = useState(1);
   const [mouseDownPos, setMouseDownPos] = useState(null);
   const [hasMoved, setHasMoved] = useState(false);
+  const [theme, setTheme] = useState('dark');
 
   useEffect(() => {
     loadData();
     loadRediscover();
   }, [folderId]);
 
-  // Lock body scroll when on mindmap
   useEffect(() => {
-    // Prevent body scroll
     document.body.style.overflow = 'hidden';
     document.body.style.position = 'fixed';
     document.body.style.width = '100%';
     document.body.style.height = '100%';
     
-    // Prevent zoom on mobile
-    const viewport = document.querySelector('meta[name=viewport]');
-    const originalViewport = viewport?.getAttribute('content');
-    if (viewport) {
-      viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
-    }
-
     return () => {
-      // Restore on unmount
       document.body.style.overflow = '';
       document.body.style.position = '';
       document.body.style.width = '';
       document.body.style.height = '';
-      if (viewport && originalViewport) {
-        viewport.setAttribute('content', originalViewport);
-      }
-    };
-  }, []);
-
-  // Prevent browser zoom more aggressively
-  useEffect(() => {
-    const preventZoom = (e) => {
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-    };
-    
-    const preventKeyboardZoom = (e) => {
-      if ((e.ctrlKey || e.metaKey) && (e.key === '+' || e.key === '-' || e.key === '=' || e.key === '0')) {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-    };
-    
-    document.addEventListener('wheel', preventZoom, { passive: false, capture: true });
-    document.addEventListener('keydown', preventKeyboardZoom, { passive: false, capture: true });
-    
-    return () => {
-      document.removeEventListener('wheel', preventZoom, { capture: true });
-      document.removeEventListener('keydown', preventKeyboardZoom, { capture: true });
     };
   }, []);
 
@@ -189,10 +149,6 @@ export default function MessyMap() {
     }
   };
 
-  const handleFocus = (node) => {
-    setFocusedNode(node.id);
-  };
-
   const handleCanvasClick = (e) => {
     if (e.target === canvasRef.current && !hasMoved && mouseDownPos) {
       const rect = canvasRef.current.getBoundingClientRect();
@@ -278,6 +234,15 @@ export default function MessyMap() {
     return connected;
   };
 
+  // Generate smooth bezier curve path
+  const getBezierPath = (x1, y1, x2, y2) => {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const curve = Math.abs(dx) * 0.3;
+    
+    return `M ${x1} ${y1} C ${x1 + curve} ${y1}, ${x2 - curve} ${y2}, ${x2} ${y2}`;
+  };
+
   const filteredNodes = nodes.filter(n => {
     if (showTimeline) {
       const nodeTime = new Date(n.createdAt).getTime();
@@ -286,40 +251,50 @@ export default function MessyMap() {
     return true;
   });
 
+  const bgColor = theme === 'dark' ? 'bg-[#1e1e1e]' : 'bg-gray-50';
+  const cardBg = theme === 'dark' ? 'bg-[#2d2d2d]' : 'bg-white';
+  const cardBorder = theme === 'dark' ? 'border-[#3d3d3d]' : 'border-gray-200';
+  const textColor = theme === 'dark' ? 'text-gray-100' : 'text-gray-900';
+  const textSecondary = theme === 'dark' ? 'text-gray-400' : 'text-gray-600';
+  const toolbarBg = theme === 'dark' ? 'bg-[#252525]' : 'bg-white';
+  const toolbarBorder = theme === 'dark' ? 'border-[#3d3d3d]' : 'border-gray-200';
+  const inputBg = theme === 'dark' ? 'bg-[#1e1e1e]' : 'bg-white';
+  const inputBorder = theme === 'dark' ? 'border-[#3d3d3d]' : 'border-gray-300';
+
   return (
-    <div className="relative w-screen h-screen bg-gradient-to-br from-gray-50 to-gray-100 overflow-hidden">
+    <div className={`relative w-screen h-screen ${bgColor} overflow-hidden transition-colors duration-200`}>
       {/* Top Toolbar */}
-      <div className="absolute top-0 left-0 right-0 z-20 bg-white border-b border-gray-200 shadow-sm">
-        <div className="flex items-center justify-between px-6 py-3">
+      <div className={`absolute top-0 left-0 right-0 z-20 ${toolbarBg} border-b ${toolbarBorder} shadow-sm`}>
+        <div className="flex items-center justify-between px-5 py-3">
           {/* Left Section */}
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <button
               onClick={() => navigate('/')}
-              className="p-2 hover:bg-gray-100 rounded-md transition-colors"
+              className={`p-2 hover:bg-opacity-10 ${theme === 'dark' ? 'hover:bg-white' : 'hover:bg-gray-900'} rounded-md transition-colors`}
               title="Home"
             >
-              <Home size={18} className="text-gray-700" />
+              <Home size={18} className={textColor} />
             </button>
             
-            <div className="w-px h-5 bg-gray-300" />
+            <div className={`w-px h-5 ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-300'}`} />
             
             <div className="flex items-center gap-2">
               <div className="relative">
-                <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                <Search size={16} className={`absolute left-3 top-1/2 transform -translate-y-1/2 ${textSecondary}`} />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
                   placeholder="Search notes..."
-                  className="pl-9 pr-3 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent w-64 text-sm"
+                  className={`pl-9 pr-3 py-1.5 ${inputBg} border ${inputBorder} rounded-md focus:outline-none focus:ring-1 ${theme === 'dark' ? 'focus:ring-blue-500' : 'focus:ring-blue-500'} w-64 text-sm ${textColor}`}
                 />
               </div>
             </div>
 
             <button
               onClick={runClustering}
-              className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-100 rounded-md transition-colors text-sm text-gray-700"
+              className={`flex items-center gap-2 px-3 py-1.5 hover:bg-opacity-10 ${theme === 'dark' ? 'hover:bg-white' : 'hover:bg-gray-900'} rounded-md transition-colors text-sm ${textColor}`}
               title="Auto-cluster notes"
             >
               <Brain size={16} />
@@ -329,7 +304,9 @@ export default function MessyMap() {
             <button
               onClick={() => setShowTimeline(!showTimeline)}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors text-sm ${
-                showTimeline ? 'bg-blue-50 text-blue-700' : 'text-gray-700 hover:bg-gray-100'
+                showTimeline 
+                  ? 'bg-blue-500 bg-opacity-20 text-blue-400' 
+                  : `${textColor} hover:bg-opacity-10 ${theme === 'dark' ? 'hover:bg-white' : 'hover:bg-gray-900'}`
               }`}
             >
               <Calendar size={16} />
@@ -339,7 +316,9 @@ export default function MessyMap() {
             <button
               onClick={() => setShowOrphans(!showOrphans)}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors text-sm ${
-                showOrphans ? 'bg-pink-50 text-pink-700' : 'text-gray-700 hover:bg-gray-100'
+                showOrphans 
+                  ? 'bg-pink-500 bg-opacity-20 text-pink-400' 
+                  : `${textColor} hover:bg-opacity-10 ${theme === 'dark' ? 'hover:bg-white' : 'hover:bg-gray-900'}`
               }`}
             >
               <Eye size={16} />
@@ -350,34 +329,32 @@ export default function MessyMap() {
           {/* Right Section */}
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setMessyMode(!messyMode)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-all text-sm ${
-                messyMode ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-600'
-              }`}
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              className={`p-2 hover:bg-opacity-10 ${theme === 'dark' ? 'hover:bg-white' : 'hover:bg-gray-900'} rounded-md transition-colors`}
+              title="Toggle Theme"
             >
-              {messyMode ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-              Messy Mode
+              {theme === 'dark' ? <Sun size={18} className={textColor} /> : <Moon size={18} className={textColor} />}
             </button>
 
-            <div className="w-px h-5 bg-gray-300" />
+            <div className={`w-px h-5 ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-300'}`} />
 
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setZoom(prev => Math.max(0.1, prev - 0.1))}
-                className="p-1.5 hover:bg-gray-100 rounded-md transition-colors"
+                className={`p-1.5 hover:bg-opacity-10 ${theme === 'dark' ? 'hover:bg-white' : 'hover:bg-gray-900'} rounded-md transition-colors`}
                 title="Zoom Out"
               >
-                <Minimize2 size={16} className="text-gray-700" />
+                <Minimize2 size={16} className={textColor} />
               </button>
-              <span className="text-xs font-medium text-gray-600 min-w-[45px] text-center">
+              <span className={`text-xs font-medium ${textSecondary} min-w-[45px] text-center`}>
                 {Math.round(zoom * 100)}%
               </span>
               <button
                 onClick={() => setZoom(prev => Math.min(3, prev + 0.1))}
-                className="p-1.5 hover:bg-gray-100 rounded-md transition-colors"
+                className={`p-1.5 hover:bg-opacity-10 ${theme === 'dark' ? 'hover:bg-white' : 'hover:bg-gray-900'} rounded-md transition-colors`}
                 title="Zoom In"
               >
-                <Maximize2 size={16} className="text-gray-700" />
+                <Maximize2 size={16} className={textColor} />
               </button>
             </div>
 
@@ -386,7 +363,7 @@ export default function MessyMap() {
                 setZoom(1);
                 setPanOffset({ x: 0, y: 0 });
               }}
-              className="px-3 py-1.5 hover:bg-gray-100 rounded-md text-xs font-medium text-gray-700"
+              className={`px-3 py-1.5 hover:bg-opacity-10 ${theme === 'dark' ? 'hover:bg-white' : 'hover:bg-gray-900'} rounded-md text-xs font-medium ${textColor}`}
             >
               Reset
             </button>
@@ -396,9 +373,9 @@ export default function MessyMap() {
 
       {/* Timeline Slider */}
       {showTimeline && (
-        <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-20 bg-white rounded-2xl shadow-lg px-6 py-4 border border-gray-200">
+        <div className={`absolute bottom-6 left-1/2 transform -translate-x-1/2 z-20 ${cardBg} rounded-xl shadow-xl px-6 py-4 border ${cardBorder}`}>
           <div className="flex items-center gap-4">
-            <span className="text-sm font-medium text-gray-600">
+            <span className={`text-sm font-medium ${textSecondary}`}>
               {new Date(dateRange[0]).toLocaleDateString()}
             </span>
             <input
@@ -409,7 +386,7 @@ export default function MessyMap() {
               onChange={(e) => setDateRange([dateRange[0], parseInt(e.target.value)])}
               className="w-64"
             />
-            <span className="text-sm font-medium text-gray-600">
+            <span className={`text-sm font-medium ${textSecondary}`}>
               {new Date(dateRange[1]).toLocaleDateString()}
             </span>
           </div>
@@ -418,27 +395,25 @@ export default function MessyMap() {
 
       {/* Orphans Panel */}
       {showOrphans && orphans.length > 0 && (
-        <div className="absolute top-20 right-4 z-20 bg-white rounded-2xl shadow-lg p-4 border border-gray-200 w-80">
+        <div className={`absolute top-20 right-4 z-20 ${cardBg} rounded-xl shadow-xl p-4 border ${cardBorder} w-80`}>
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-bold text-gray-800">Forgotten Notes</h3>
+            <h3 className={`font-semibold ${textColor}`}>Forgotten Notes</h3>
             <button
               onClick={() => setShowOrphans(false)}
-              className="text-gray-400 hover:text-gray-600"
+              className={textSecondary + ' hover:' + textColor}
             >
-              ✕
+              <X size={18} />
             </button>
           </div>
           <div className="space-y-2 max-h-96 overflow-y-auto">
             {orphans.map(o => (
               <div
                 key={o.id}
-                onClick={() => {
-                  navigate(`/note/${o.id}`);
-                }}
-                className="p-3 bg-pink-50 rounded-lg cursor-pointer hover:bg-pink-100 transition-colors border border-pink-100"
+                onClick={() => navigate(`/note/${o.id}`)}
+                className={`p-3 ${theme === 'dark' ? 'bg-pink-500 bg-opacity-10 border-pink-500 border-opacity-30' : 'bg-pink-50 border-pink-200'} rounded-lg cursor-pointer hover:bg-opacity-20 transition-colors border`}
               >
-                <div className="font-medium text-gray-800 text-sm">{o.title}</div>
-                <div className="text-xs text-gray-500 mt-1">
+                <div className={`font-medium ${textColor} text-sm`}>{o.title}</div>
+                <div className={`text-xs ${textSecondary} mt-1`}>
                   Last updated: {new Date(o.updatedAt).toLocaleDateString()}
                 </div>
               </div>
@@ -449,28 +424,28 @@ export default function MessyMap() {
 
       {/* Clusters Panel */}
       {showClusters && clusters.length > 0 && (
-        <div className="absolute top-20 left-4 z-20 bg-white rounded-2xl shadow-lg p-4 border border-gray-200 w-80">
+        <div className={`absolute top-20 left-4 z-20 ${cardBg} rounded-xl shadow-xl p-4 border ${cardBorder} w-80`}>
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-bold text-gray-800">Auto-discovered Clusters</h3>
+            <h3 className={`font-semibold ${textColor}`}>Discovered Clusters</h3>
             <button
               onClick={() => setShowClusters(false)}
-              className="text-gray-400 hover:text-gray-600"
+              className={textSecondary + ' hover:' + textColor}
             >
-              ✕
+              <X size={18} />
             </button>
           </div>
           <div className="space-y-2">
             {clusters.map(c => (
               <div
                 key={c.id}
-                className="p-3 rounded-lg border"
+                className={`p-3 rounded-lg border`}
                 style={{ 
-                  backgroundColor: c.color + '40', 
+                  backgroundColor: theme === 'dark' ? c.color + '20' : c.color + '40',
                   borderColor: c.color 
                 }}
               >
-                <div className="font-medium text-gray-800 text-sm mb-1">{c.name}</div>
-                <div className="text-xs text-gray-600">
+                <div className={`font-medium ${textColor} text-sm mb-1`}>{c.name}</div>
+                <div className={`text-xs ${textSecondary}`}>
                   {c.notes.length} notes
                 </div>
               </div>
@@ -504,27 +479,34 @@ export default function MessyMap() {
             transformOrigin: '0 0'
           }}
         >
-          {/* Edges */}
+          {/* Edges with Bezier Curves */}
           {edges.map(edge => {
             const source = nodes.find(n => n.id === edge.sourceId);
             const target = nodes.find(n => n.id === edge.targetId);
             if (!source || !target) return null;
 
             const opacity = focusedNode 
-              ? (edge.sourceId === focusedNode || edge.targetId === focusedNode ? 1 : 0.1)
-              : 0.6;
+              ? (edge.sourceId === focusedNode || edge.targetId === focusedNode ? 1 : 0.15)
+              : 0.4;
+
+            const strokeColor = theme === 'dark' 
+              ? (edge.strength > 2 ? '#a855f7' : '#4b5563')
+              : (edge.strength > 2 ? '#9333ea' : '#94a3b8');
 
             return (
               <g key={edge.id}>
-                <line
-                  x1={source.x + 60}
-                  y1={source.y + 40}
-                  x2={target.x + 60}
-                  y2={target.y + 40}
-                  stroke={edge.strength > 2 ? '#9333EA' : '#CBD5E1'}
-                  strokeWidth={Math.min(edge.strength * 1.5, 4)}
+                <path
+                  d={getBezierPath(
+                    source.x + 120,
+                    source.y + 60,
+                    target.x + 120,
+                    target.y + 60
+                  )}
+                  stroke={strokeColor}
+                  strokeWidth={Math.min(edge.strength * 1.5, 3)}
+                  fill="none"
                   opacity={opacity}
-                  strokeDasharray={edge.strength > 2 ? '0' : '5,5'}
+                  strokeLinecap="round"
                 />
               </g>
             );
@@ -535,7 +517,7 @@ export default function MessyMap() {
         {filteredNodes.map(node => {
           const isConnected = focusedNode && getConnectedNodes(focusedNode).has(node.id);
           const opacity = focusedNode 
-            ? (node.id === focusedNode || isConnected ? 1 : 0.15)
+            ? (node.id === focusedNode || isConnected ? 1 : 0.2)
             : 1;
 
           return (
@@ -548,7 +530,7 @@ export default function MessyMap() {
                 opacity,
                 transform: `scale(${zoom})`,
                 transformOrigin: '0 0',
-                transition: draggingNode?.id === node.id ? 'none' : 'opacity 0.2s ease'
+                transition: draggingNode?.id === node.id ? 'none' : 'opacity 0.3s ease'
               }}
               onMouseDown={(e) => handleMouseDown(e, node)}
               onDoubleClick={(e) => {
@@ -557,42 +539,56 @@ export default function MessyMap() {
               }}
             >
               <div
-                className={`relative bg-white rounded-lg shadow-sm hover:shadow-md transition-all duration-200 border ${
-                  node.highlighted ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'
-                } ${selectedNode?.id === node.id ? 'ring-2 ring-blue-300' : ''}`}
+                className={`relative ${cardBg} rounded-lg shadow-lg hover:shadow-xl transition-all duration-200 border-2 ${
+                  node.highlighted 
+                    ? 'border-blue-500 ring-2 ring-blue-500 ring-opacity-30' 
+                    : selectedNode?.id === node.id 
+                      ? 'border-purple-500 ring-2 ring-purple-500 ring-opacity-30'
+                      : cardBorder
+                }`}
                 style={{
-                  width: '240px',
-                  minHeight: '120px',
-                  backgroundColor: node.color || '#ffffff'
+                  width: '280px',
+                  minHeight: '140px',
+                  backgroundColor: theme === 'dark' ? (node.color !== '#FFFFFF' && node.color !== '#ffffff' ? node.color + '15' : undefined) : node.color
                 }}
               >
                 <div className="p-4">
-                  <h3 className="font-semibold text-gray-900 mb-2 text-sm line-clamp-2 leading-snug">
+                  <h3 className={`font-semibold ${textColor} mb-2 text-base line-clamp-2 leading-tight`}>
                     {node.title}
                   </h3>
                   {node.rawText && (
-                    <p className="text-xs text-gray-600 line-clamp-3 leading-relaxed">
+                    <p className={`text-sm ${textSecondary} line-clamp-3 leading-relaxed`}>
                       {node.rawText}
                     </p>
                   )}
                   {node.type !== 'text' && (
-                    <div className="mt-2 inline-flex items-center gap-1 px-2 py-1 bg-gray-100 rounded text-xs text-gray-600">
+                    <div className={`mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-100'} rounded-md text-xs ${textSecondary} font-medium`}>
                       {node.type}
                     </div>
                   )}
                 </div>
 
                 {/* Node Actions */}
-                <div className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                <div className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1.5">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      handleFocus(node);
+                      navigate(`/note/${node.id}`);
                     }}
-                    className="p-1.5 bg-blue-600 text-white rounded-full shadow-md hover:bg-blue-700 transition-colors"
+                    className="p-2 bg-blue-500 text-white rounded-lg shadow-lg hover:bg-blue-600 transition-colors"
+                    title="Edit"
+                  >
+                    <Edit3 size={14} />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setFocusedNode(focusedNode === node.id ? null : node.id);
+                    }}
+                    className={`p-2 ${focusedNode === node.id ? 'bg-purple-500' : 'bg-gray-600'} text-white rounded-lg shadow-lg hover:bg-purple-600 transition-colors`}
                     title="Focus Mode"
                   >
-                    <Eye size={12} />
+                    <Eye size={14} />
                   </button>
                   <button
                     onClick={(e) => {
@@ -601,10 +597,10 @@ export default function MessyMap() {
                         deleteNode(node.id);
                       }
                     }}
-                    className="p-1.5 bg-red-600 text-white rounded-full shadow-md hover:bg-red-700 transition-colors"
+                    className="p-2 bg-red-500 text-white rounded-lg shadow-lg hover:bg-red-600 transition-colors"
                     title="Delete"
                   >
-                    <Trash2 size={12} />
+                    <Trash2 size={14} />
                   </button>
                 </div>
               </div>
@@ -615,13 +611,13 @@ export default function MessyMap() {
 
       {/* Focus Mode Indicator */}
       {focusedNode && (
-        <div className="absolute bottom-4 left-4 z-20 bg-blue-600 text-white rounded-2xl shadow-lg px-6 py-3">
+        <div className="absolute bottom-6 left-6 z-20 bg-purple-500 text-white rounded-xl shadow-xl px-5 py-3">
           <div className="flex items-center gap-3">
             <Eye size={20} />
-            <span className="font-medium">Focus Mode Active</span>
+            <span className="font-medium">Focus Mode</span>
             <button
               onClick={() => setFocusedNode(null)}
-              className="ml-4 px-3 py-1 bg-white text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-50"
+              className="ml-3 px-3 py-1 bg-white text-purple-600 rounded-lg text-sm font-medium hover:bg-purple-50"
             >
               Exit
             </button>
@@ -632,10 +628,10 @@ export default function MessyMap() {
       {/* Helper Text */}
       {nodes.length === 0 && (
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none">
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
-            <Plus size={48} className="mx-auto mb-3 text-gray-400" />
-            <p className="text-lg text-gray-700 mb-1 font-medium">Click anywhere to create a note</p>
-            <p className="text-sm text-gray-500">Double-click to open • Drag to move • Scroll to zoom</p>
+          <div className={`${cardBg} rounded-xl shadow-xl border ${cardBorder} p-10`}>
+            <Plus size={56} className={`mx-auto mb-4 ${textSecondary}`} />
+            <p className={`text-xl ${textColor} mb-2 font-semibold`}>Click anywhere to create a note</p>
+            <p className={`text-sm ${textSecondary}`}>Double-click to edit • Drag to move • Scroll to zoom</p>
           </div>
         </div>
       )}
