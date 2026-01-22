@@ -5,7 +5,7 @@ import {
   Home, Search, Brain, Eye, Moon, Sun, Layers, Calendar, 
   Maximize2, Minimize2, Plus, Trash2, Edit3, X, Grid3x3,
   LayoutList, Network, CircleDot, RotateCcw, RotateCw,
-  Archive, Star, Filter, Sparkles, Link2, Zap
+  Archive, Star, Filter, Sparkles, Link2, Zap, Check
 } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
@@ -37,9 +37,9 @@ export default function MessyMap() {
   const [theme, setTheme] = useState('dark');
   
   // New features state
-  const [viewMode, setViewMode] = useState('freeform'); // freeform, radial, outline, board
+  const [viewMode, setViewMode] = useState('freeform');
   const [showGrid, setShowGrid] = useState(false);
-  const [filterMode, setFilterMode] = useState('all'); // all, active, ephemeral, sticky
+  const [filterMode, setFilterMode] = useState('all');
   const [showArchived, setShowArchived] = useState(false);
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
@@ -48,12 +48,15 @@ export default function MessyMap() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [messyMode, setMessyMode] = useState(true);
   const [multiSelect, setMultiSelect] = useState(new Set());
+  
+  // Inline editing state
+  const [editingNode, setEditingNode] = useState(null);
+  const [editingText, setEditingText] = useState('');
 
   useEffect(() => {
     loadData();
     loadRediscover();
     
-    // Auto-archive ephemeral notes every 5 minutes
     const archiveInterval = setInterval(autoArchive, 5 * 60 * 1000);
     
     return () => clearInterval(archiveInterval);
@@ -73,41 +76,29 @@ export default function MessyMap() {
     };
   }, []);
 
-  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
-      // Undo/Redo
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
         undo();
       } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) {
         e.preventDefault();
         redo();
-      }
-      // Delete selected
-      else if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedNode && document.activeElement.tagName !== 'INPUT') {
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedNode && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
           e.preventDefault();
           deleteNode(selectedNode.id);
         }
-      }
-      // Archive selected
-      else if (e.key === 'a' && selectedNode && document.activeElement.tagName !== 'INPUT') {
+      } else if (e.key === 'a' && selectedNode && document.activeElement.tagName !== 'INPUT') {
         e.preventDefault();
         toggleArchive(selectedNode.id);
-      }
-      // Toggle sticky
-      else if (e.key === 's' && selectedNode && document.activeElement.tagName !== 'INPUT') {
+      } else if (e.key === 's' && selectedNode && document.activeElement.tagName !== 'INPUT') {
         e.preventDefault();
         toggleSticky(selectedNode.id);
-      }
-      // Focus mode
-      else if (e.key === 'f' && selectedNode && document.activeElement.tagName !== 'INPUT') {
+      } else if (e.key === 'f' && selectedNode && document.activeElement.tagName !== 'INPUT') {
         e.preventDefault();
         setFocusedNode(focusedNode === selectedNode.id ? null : selectedNode.id);
-      }
-      // View modes
-      else if (e.key === '1' && e.ctrlKey) {
+      } else if (e.key === '1' && e.ctrlKey) {
         e.preventDefault();
         setViewMode('freeform');
       } else if (e.key === '2' && e.ctrlKey) {
@@ -116,24 +107,26 @@ export default function MessyMap() {
       } else if (e.key === '3' && e.ctrlKey) {
         e.preventDefault();
         setViewMode('outline');
-      }
-      // Escape to deselect
-      else if (e.key === 'Escape') {
+      } else if (e.key === 'Escape') {
         setSelectedNode(null);
         setConnectingFrom(null);
         setMultiSelect(new Set());
+        setEditingNode(null);
+      } else if (e.key === 'Enter' && editingNode && !e.shiftKey) {
+        e.preventDefault();
+        saveInlineEdit();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedNode, focusedNode, historyIndex, history]);
+  }, [selectedNode, focusedNode, historyIndex, history, editingNode, editingText]);
 
   const saveToHistory = useCallback((newNodes) => {
     setHistory(prev => {
       const newHistory = prev.slice(0, historyIndex + 1);
       newHistory.push(JSON.parse(JSON.stringify(newNodes)));
-      return newHistory.slice(-50); // Keep last 50 states
+      return newHistory.slice(-50);
     });
     setHistoryIndex(prev => Math.min(prev + 1, 49));
   }, [historyIndex]);
@@ -169,7 +162,6 @@ export default function MessyMap() {
           setDateRange([Math.min(...timestamps), Date.now()]);
         }
         
-        // Load intelligent suggestions
         if (messyMode && res.data.nodes.length >= 3) {
           loadSuggestions();
         }
@@ -224,7 +216,7 @@ export default function MessyMap() {
         } else {
           setClusterPreview(null);
           setShowClusters(false);
-          loadData(); // Reload to see applied clustering
+          loadData();
         }
       } else {
         alert('Not enough notes with content to cluster. Try adding more notes with text.');
@@ -257,7 +249,6 @@ export default function MessyMap() {
         highlighted: resultIds.includes(n.id)
       })));
       
-      // Center on first result
       if (res.data.length > 0 && res.data[0].x !== undefined) {
         const firstResult = res.data[0];
         centerOnNode(firstResult);
@@ -276,8 +267,8 @@ export default function MessyMap() {
     const centerY = rect.height / 2;
     
     setPanOffset({
-      x: centerX - (node.x * zoom) - 140, // 140 is half node width
-      y: centerY - (node.y * zoom) - 70  // 70 is half node height
+      x: centerX - (node.x * zoom) - 140,
+      y: centerY - (node.y * zoom) - 70
     });
     
     setSelectedNode(nodes.find(n => n.id === node.id));
@@ -308,6 +299,38 @@ export default function MessyMap() {
       saveToHistory(newNodes);
     } catch (error) {
       console.error('Failed to update node position:', error);
+    }
+  };
+
+  const startInlineEdit = (node, e) => {
+    if (e) e.stopPropagation();
+    setEditingNode(node.id);
+    setEditingText(node.rawText || node.title || '');
+  };
+
+  const saveInlineEdit = async () => {
+    if (!editingNode || !editingText.trim()) {
+      setEditingNode(null);
+      return;
+    }
+
+    try {
+      const title = editingText.split('\n')[0].slice(0, 50) || 'Untitled';
+      await axios.put(`${API}/api/notes/${editingNode}`, {
+        plainText: editingText,
+        title,
+        messyMode: true
+      }, { withCredentials: true });
+      
+      setNodes(prevNodes => prevNodes.map(n => 
+        n.id === editingNode 
+          ? { ...n, rawText: editingText, title } 
+          : n
+      ));
+      
+      setEditingNode(null);
+    } catch (error) {
+      console.error('Failed to save inline edit:', error);
     }
   };
 
@@ -344,7 +367,7 @@ export default function MessyMap() {
       const node = nodes.find(n => n.id === nodeId);
       await axios.put(`${API}/api/notes/${nodeId}`, { 
         sticky: !node.sticky,
-        ephemeral: node.sticky // If making sticky, also make non-ephemeral
+        ephemeral: node.sticky
       }, { withCredentials: true });
       const newNodes = nodes.map(n => 
         n.id === nodeId ? { ...n, sticky: !n.sticky, ephemeral: n.sticky } : n
@@ -390,7 +413,6 @@ export default function MessyMap() {
       setMouseDownPos({ x: e.clientX, y: e.clientY });
       setHasMoved(false);
       
-      // Multi-select with Ctrl/Cmd
       if (e.ctrlKey || e.metaKey) {
         setMultiSelect(prev => {
           const newSet = new Set(prev);
@@ -432,7 +454,6 @@ export default function MessyMap() {
       const x = (e.clientX - rect.left - panOffset.x - dragOffset.x) / zoom;
       const y = (e.clientY - rect.top - panOffset.y - dragOffset.y) / zoom;
       
-      // Snap to grid if enabled
       const snapX = showGrid ? Math.round(x / 50) * 50 : x;
       const snapY = showGrid ? Math.round(y / 50) * 50 : y;
       
@@ -487,7 +508,6 @@ export default function MessyMap() {
 
   const applyLayout = (mode) => {
     if (mode === 'radial' && nodes.length > 0) {
-      // Radial layout with most connected node at center
       const linkCounts = nodes.map(n => ({
         id: n.id,
         count: edges.filter(e => e.sourceId === n.id || e.targetId === n.id).length
@@ -523,7 +543,6 @@ export default function MessyMap() {
     }
   };
 
-  // Filter nodes based on filter mode
   const getFilteredNodes = () => {
     let filtered = nodes;
     
@@ -562,7 +581,6 @@ export default function MessyMap() {
       {/* Top Toolbar */}
       <div className={`absolute top-0 left-0 right-0 z-20 ${toolbarBg} border-b ${toolbarBorder} shadow-sm`}>
         <div className="flex items-center justify-between px-4 py-2">
-          {/* Left Section */}
           <div className="flex items-center gap-2">
             <button
               onClick={() => navigate('/')}
@@ -583,9 +601,9 @@ export default function MessyMap() {
                 onKeyPress={(e) => {
                   if (e.key === 'Enter') {
                     if (e.shiftKey) {
-                      handleSearch(true); // Fuzzy search
+                      handleSearch(true);
                     } else {
-                      handleSearch(false); // Semantic search
+                      handleSearch(false);
                     }
                   }
                 }}
@@ -627,7 +645,6 @@ export default function MessyMap() {
             </button>
           </div>
 
-          {/* Center Section - View Modes */}
           <div className="flex items-center gap-1">
             <button
               onClick={() => { setViewMode('freeform'); }}
@@ -652,9 +669,7 @@ export default function MessyMap() {
             </button>
           </div>
 
-          {/* Right Section */}
           <div className="flex items-center gap-2">
-            {/* Undo/Redo */}
             <button
               onClick={undo}
               disabled={historyIndex <= 0}
@@ -674,7 +689,6 @@ export default function MessyMap() {
 
             <div className={`w-px h-4 ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-300'}`} />
 
-            {/* Filters */}
             <select
               value={filterMode}
               onChange={(e) => setFilterMode(e.target.value)}
@@ -866,61 +880,66 @@ export default function MessyMap() {
         }}
         style={{ paddingTop: '48px' }}
       >
+        {/* SVG Layer for Edges - FIXED */}
         <svg
           className="absolute inset-0 pointer-events-none"
           style={{
-            transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`,
-            transformOrigin: '0 0'
+            width: '100%',
+            height: '100%',
+            top: 0,
+            left: 0,
+            zIndex: 0
           }}
         >
-          {/* Edges */}
-          {edges.map(edge => {
-            const source = nodes.find(n => n.id === edge.sourceId);
-            const target = nodes.find(n => n.id === edge.targetId);
-            if (!source || !target) return null;
+          <g transform={`translate(${panOffset.x}, ${panOffset.y}) scale(${zoom})`}>
+            {edges.map(edge => {
+              const source = nodes.find(n => n.id === edge.sourceId);
+              const target = nodes.find(n => n.id === edge.targetId);
+              if (!source || !target) return null;
 
-            const opacity = focusedNode 
-              ? (edge.sourceId === focusedNode || edge.targetId === focusedNode ? 0.8 : 0.1)
-              : 0.3;
+              const opacity = focusedNode 
+                ? (edge.sourceId === focusedNode || edge.targetId === focusedNode ? 0.8 : 0.1)
+                : 0.4;
 
-            const strokeColor = theme === 'dark' 
-              ? (edge.strength > 2 ? '#a855f7' : '#4b5563')
-              : (edge.strength > 2 ? '#9333ea' : '#94a3b8');
+              const strokeColor = theme === 'dark' 
+                ? (edge.strength > 2 ? '#a855f7' : '#6b7280')
+                : (edge.strength > 2 ? '#9333ea' : '#94a3b8');
 
-            return (
-              <path
-                key={edge.id}
-                d={getBezierPath(
-                  source.x + 140,
-                  source.y + 60,
-                  target.x + 140,
-                  target.y + 60
-                )}
-                stroke={strokeColor}
-                strokeWidth={Math.min(edge.strength * 1.5, 3)}
-                fill="none"
-                opacity={opacity}
-                strokeLinecap="round"
+              return (
+                <path
+                  key={edge.id}
+                  d={getBezierPath(
+                    source.x + 140,
+                    source.y + 60,
+                    target.x + 140,
+                    target.y + 60
+                  )}
+                  stroke={strokeColor}
+                  strokeWidth={Math.min(edge.strength * 1.5, 3)}
+                  fill="none"
+                  opacity={opacity}
+                  strokeLinecap="round"
+                />
+              );
+            })}
+
+            {/* Connecting Line */}
+            {connectingFrom && mouseDownPos && (
+              <line
+                x1={connectingFrom.x + 140}
+                y1={connectingFrom.y + 60}
+                x2={(mouseDownPos.x - panOffset.x) / zoom}
+                y2={(mouseDownPos.y - panOffset.y) / zoom}
+                stroke="#3b82f6"
+                strokeWidth={2}
+                strokeDasharray="5,5"
+                opacity={0.6}
               />
-            );
-          })}
-
-          {/* Connecting Line */}
-          {connectingFrom && mouseDownPos && (
-            <line
-              x1={connectingFrom.x + 140}
-              y1={connectingFrom.y + 60}
-              x2={(mouseDownPos.x - panOffset.x) / zoom}
-              y2={(mouseDownPos.y - panOffset.y) / zoom}
-              stroke="#3b82f6"
-              strokeWidth={2}
-              strokeDasharray="5,5"
-              opacity={0.6}
-            />
-          )}
+            )}
+          </g>
         </svg>
 
-        {/* Nodes */}
+        {/* Nodes Layer */}
         {filteredNodes.map(node => {
           const isConnected = focusedNode && getConnectedNodes(focusedNode).has(node.id);
           const opacity = focusedNode 
@@ -928,6 +947,7 @@ export default function MessyMap() {
             : (node.weight || 1);
 
           const scale = node.sticky ? 1.1 : (node.priority > 0 ? 1 + (node.priority * 0.05) : 1);
+          const isEditing = editingNode === node.id;
 
           return (
             <div
@@ -939,22 +959,25 @@ export default function MessyMap() {
                 opacity,
                 transform: `scale(${zoom * scale})`,
                 transformOrigin: '0 0',
-                transition: draggingNode?.id === node.id ? 'none' : 'opacity 0.2s ease'
+                transition: draggingNode?.id === node.id ? 'none' : 'opacity 0.2s ease',
+                zIndex: isEditing ? 100 : 1
               }}
               onMouseDown={(e) => {
-                if (e.shiftKey && selectedNode) {
-                  // Shift+click to connect
-                  createLink(selectedNode.id, node.id);
-                } else if (e.altKey) {
-                  // Alt+click to start connection
-                  setConnectingFrom(node);
-                } else {
-                  handleMouseDown(e, node);
+                if (!isEditing) {
+                  if (e.shiftKey && selectedNode) {
+                    createLink(selectedNode.id, node.id);
+                  } else if (e.altKey) {
+                    setConnectingFrom(node);
+                  } else {
+                    handleMouseDown(e, node);
+                  }
                 }
               }}
               onDoubleClick={(e) => {
-                e.stopPropagation();
-                navigate(`/note/${node.id}`);
+                if (!isEditing) {
+                  e.stopPropagation();
+                  navigate(`/note/${node.id}`);
+                }
               }}
             >
               <div
@@ -988,86 +1011,111 @@ export default function MessyMap() {
                 </div>
 
                 <div className="p-3">
-                  <h3 className={`font-semibold ${textColor} mb-1.5 text-sm line-clamp-2 leading-tight`}>
-                    {node.title}
-                  </h3>
-                  {node.rawText && (
-                    <p className={`text-xs ${textSecondary} line-clamp-2 leading-relaxed`}>
-                      {node.rawText}
-                    </p>
-                  )}
-                  {node.type !== 'text' && (
-                    <div className={`mt-2 inline-flex items-center gap-1 px-2 py-0.5 ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-100'} rounded-md text-xs ${textSecondary}`}>
-                      {node.type}
+                  {isEditing ? (
+                    <div className="relative">
+                      <textarea
+                        value={editingText}
+                        onChange={(e) => setEditingText(e.target.value)}
+                        onBlur={saveInlineEdit}
+                        autoFocus
+                        className={`w-full ${theme === 'dark' ? 'bg-[#1e1e1e] text-white' : 'bg-white text-gray-900'} border border-blue-500 rounded px-2 py-1 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                        rows={4}
+                        placeholder="Type your note..."
+                      />
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          saveInlineEdit();
+                        }}
+                        className="absolute -top-2 -right-2 p-1 bg-green-500 text-white rounded-full hover:bg-green-600 shadow-lg"
+                      >
+                        <Check size={12} />
+                      </button>
                     </div>
+                  ) : (
+                    <>
+                      <h3 className={`font-semibold ${textColor} mb-1.5 text-sm line-clamp-2 leading-tight`}>
+                        {node.title}
+                      </h3>
+                      {node.rawText && (
+                        <p className={`text-xs ${textSecondary} line-clamp-2 leading-relaxed`}>
+                          {node.rawText.slice(0, 100)}
+                          {node.rawText.length > 100 && '...'}
+                        </p>
+                      )}
+                      {node.type !== 'text' && (
+                        <div className={`mt-2 inline-flex items-center gap-1 px-2 py-0.5 ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-100'} rounded-md text-xs ${textSecondary}`}>
+                          {node.type}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
 
-                {/* Node Actions */}
-                <div className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setConnectingFrom(node);
-                    }}
-                    className="p-1.5 bg-blue-500 text-white rounded-md shadow-lg hover:bg-blue-600 transition-colors"
-                    title="Connect (Alt+Click)"
-                  >
-                    <Link2 size={12} />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleSticky(node.id);
-                    }}
-                    className={`p-1.5 ${node.sticky ? 'bg-yellow-500' : 'bg-gray-600'} text-white rounded-md shadow-lg hover:bg-yellow-600 transition-colors`}
-                    title="Pin (S)"
-                  >
-                    <Star size={12} fill={node.sticky ? 'white' : 'none'} />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/note/${node.id}`);
-                    }}
-                    className="p-1.5 bg-green-500 text-white rounded-md shadow-lg hover:bg-green-600 transition-colors"
-                    title="Edit"
-                  >
-                    <Edit3 size={12} />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setFocusedNode(focusedNode === node.id ? null : node.id);
-                    }}
-                    className={`p-1.5 ${focusedNode === node.id ? 'bg-purple-500' : 'bg-gray-600'} text-white rounded-md shadow-lg hover:bg-purple-600 transition-colors`}
-                    title="Focus (F)"
-                  >
-                    <Eye size={12} />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleArchive(node.id);
-                    }}
-                    className="p-1.5 bg-orange-500 text-white rounded-md shadow-lg hover:bg-orange-600 transition-colors"
-                    title="Archive (A)"
-                  >
-                    <Archive size={12} />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (window.confirm('Delete this note?')) {
-                        deleteNode(node.id);
-                      }
-                    }}
-                    className="p-1.5 bg-red-500 text-white rounded-md shadow-lg hover:bg-red-600 transition-colors"
-                    title="Delete (Del)"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
+                {/* Node Actions - only show when not editing */}
+                {!isEditing && (
+                  <div className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                    <button
+                      onClick={(e) => startInlineEdit(node, e)}
+                      className="p-1.5 bg-blue-500 text-white rounded-md shadow-lg hover:bg-blue-600 transition-colors"
+                      title="Edit inline (Enter)"
+                    >
+                      <Edit3 size={12} />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConnectingFrom(node);
+                      }}
+                      className="p-1.5 bg-purple-500 text-white rounded-md shadow-lg hover:bg-purple-600 transition-colors"
+                      title="Connect (Alt+Click)"
+                    >
+                      <Link2 size={12} />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleSticky(node.id);
+                      }}
+                      className={`p-1.5 ${node.sticky ? 'bg-yellow-500' : 'bg-gray-600'} text-white rounded-md shadow-lg hover:bg-yellow-600 transition-colors`}
+                      title="Pin (S)"
+                    >
+                      <Star size={12} fill={node.sticky ? 'white' : 'none'} />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFocusedNode(focusedNode === node.id ? null : node.id);
+                      }}
+                      className={`p-1.5 ${focusedNode === node.id ? 'bg-purple-500' : 'bg-gray-600'} text-white rounded-md shadow-lg hover:bg-purple-600 transition-colors`}
+                      title="Focus (F)"
+                    >
+                      <Eye size={12} />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleArchive(node.id);
+                      }}
+                      className="p-1.5 bg-orange-500 text-white rounded-md shadow-lg hover:bg-orange-600 transition-colors"
+                      title="Archive (A)"
+                    >
+                      <Archive size={12} />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm('Delete this note?')) {
+                          deleteNode(node.id);
+                        }
+                      }}
+                      className="p-1.5 bg-red-500 text-white rounded-md shadow-lg hover:bg-red-600 transition-colors"
+                      title="Delete (Del)"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -1119,7 +1167,7 @@ export default function MessyMap() {
               Double-click to edit • Shift+Click to link • Alt+Click to connect
             </p>
             <p className={`text-xs ${textSecondary} mt-2`}>
-              Ctrl+Z undo • Ctrl+Y redo • Ctrl+K quick capture
+              Enter for inline edit • Ctrl+Z undo • Ctrl+Y redo • Ctrl+K quick capture
             </p>
           </div>
         </div>

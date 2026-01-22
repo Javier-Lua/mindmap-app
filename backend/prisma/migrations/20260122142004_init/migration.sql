@@ -85,6 +85,33 @@ CREATE TABLE "_NoteClusters" (
 CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
 
 -- CreateIndex
+CREATE INDEX "Folder_userId_idx" ON "Folder"("userId");
+
+-- CreateIndex
+CREATE INDEX "Folder_parentId_idx" ON "Folder"("parentId");
+
+-- CreateIndex
+CREATE INDEX "Note_userId_idx" ON "Note"("userId");
+
+-- CreateIndex
+CREATE INDEX "Note_archived_idx" ON "Note"("archived");
+
+-- CreateIndex
+CREATE INDEX "Note_ephemeral_updatedAt_idx" ON "Note"("ephemeral", "updatedAt");
+
+-- CreateIndex
+CREATE INDEX "Note_userId_archived_idx" ON "Note"("userId", "archived");
+
+-- CreateIndex
+CREATE INDEX "Note_updatedAt_idx" ON "Note"("updatedAt" DESC);
+
+-- CreateIndex
+CREATE INDEX "Link_sourceId_idx" ON "Link"("sourceId");
+
+-- CreateIndex
+CREATE INDEX "Link_targetId_idx" ON "Link"("targetId");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "Link_sourceId_targetId_key" ON "Link"("sourceId", "targetId");
 
 -- CreateIndex
@@ -125,3 +152,9 @@ ALTER TABLE "_NoteClusters" ADD CONSTRAINT "_NoteClusters_A_fkey" FOREIGN KEY ("
 
 -- AddForeignKey
 ALTER TABLE "_NoteClusters" ADD CONSTRAINT "_NoteClusters_B_fkey" FOREIGN KEY ("B") REFERENCES "Note"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- Vector similarity index for Note.embedding
+CREATE INDEX IF NOT EXISTS idx_note_embedding
+ON "Note"
+USING ivfflat (embedding vector_cosine_ops)
+WITH (lists = 100);

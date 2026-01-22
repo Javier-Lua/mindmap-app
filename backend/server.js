@@ -9,11 +9,11 @@ const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const cookieParser = require('cookie-parser');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const jsonwebtoken = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
 
 const app = express();
 const prisma = new PrismaClient();
 
+// Basic middleware
 app.use(cors({ 
   origin: process.env.FRONTEND_URL, 
   credentials: true 
@@ -21,9 +21,72 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(cookieParser());
 
+// Request logging middleware
+app.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ${req.method} ${req.path}`, req.userId || 'unauthenticated');
+  next();
+});
+
+// Rate limiting
+const requestCounts = new Map();
+const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 minutes
+const RATE_LIMIT_MAX = 100;
+
+const rateLimiter = (req, res, next) => {
+  const identifier = req.ip || req.connection.remoteAddress;
+  const now = Date.now();
+  
+  if (!requestCounts.has(identifier)) {
+    requestCounts.set(identifier, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
+    return next();
+  }
+  
+  const userData = requestCounts.get(identifier);
+  
+  if (now > userData.resetTime) {
+    userData.count = 1;
+    userData.resetTime = now + RATE_LIMIT_WINDOW;
+    return next();
+  }
+  
+  if (userData.count >= RATE_LIMIT_MAX) {
+    return res.status(429).json({ 
+      error: 'Too many requests, please try again later.',
+      retryAfter: Math.ceil((userData.resetTime - now) / 1000)
+    });
+  }
+  
+  userData.count++;
+  next();
+};
+
+app.use('/api/', rateLimiter);
+
+// Health check endpoint
+app.get('/health', async (req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ 
+      status: 'ok', 
+      database: 'connected',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString()
+    });
+  } catch (e) {
+    console.error('Health check failed:', e);
+    res.status(503).json({ 
+      status: 'error', 
+      database: 'disconnected',
+      error: e.message 
+    });
+  }
+});
+
 let extractor;
 (async () => {
   extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+  console.log('ML model loaded successfully');
 })();
 
 passport.use(new GoogleStrategy({
@@ -69,7 +132,6 @@ app.get('/auth/google/callback', passport.authenticate('google', { session: fals
   res.redirect(process.env.FRONTEND_URL);
 });
 
-// FIXED: Enhanced auth middleware with user existence check
 const auth = async (req, res, next) => {
   const token = req.cookies.token;
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
@@ -77,14 +139,12 @@ const auth = async (req, res, next) => {
   try {
     const decoded = jsonwebtoken.verify(token, process.env.JWT_SECRET);
     
-    // Verify user exists in database
     const user = await prisma.user.findUnique({ 
       where: { id: decoded.userId },
       select: { id: true, email: true, name: true }
     });
     
     if (!user) {
-      // User doesn't exist - clear invalid token
       res.clearCookie('token');
       return res.status(401).json({ 
         error: 'User not found. Please sign in again.',
@@ -154,7 +214,6 @@ app.post('/api/upload', auth, async (req, res) => {
   }
 });
 
-// FIXED: Added try-catch and validation
 app.post('/api/notes', auth, async (req, res) => {
   try {
     const note = await prisma.note.create({
@@ -199,7 +258,6 @@ app.put('/api/notes/:id', auth, async (req, res) => {
     if (priority !== undefined) data.priority = priority;
     if (archived !== undefined) data.archived = archived;
     
-    // Calculate weight based on links and recency
     const note = await prisma.note.findUnique({
       where: { id: req.params.id },
       include: { incoming: true, outgoing: true }
@@ -277,7 +335,6 @@ app.put('/api/notes/:id', auth, async (req, res) => {
 
 app.delete('/api/notes/:id', auth, async (req, res) => {
   try {
-    // Verify ownership
     const note = await prisma.note.findUnique({ 
       where: { id: req.params.id },
       select: { userId: true }
@@ -379,7 +436,6 @@ app.get('/api/home', auth, async (req, res) => {
   }
 });
 
-// FIXED: Added try-catch and validation
 app.post('/api/folders', auth, async (req, res) => {
   try {
     const folder = await prisma.folder.create({
@@ -405,7 +461,6 @@ app.post('/api/folders', auth, async (req, res) => {
 
 app.put('/api/folders/:id', auth, async (req, res) => {
   try {
-    // Verify ownership
     const existing = await prisma.folder.findUnique({
       where: { id: req.params.id },
       select: { userId: true }
@@ -428,7 +483,6 @@ app.put('/api/folders/:id', auth, async (req, res) => {
 
 app.delete('/api/folders/:id', auth, async (req, res) => {
   try {
-    // Verify ownership
     const folder = await prisma.folder.findUnique({
       where: { id: req.params.id },
       select: { userId: true }
@@ -705,7 +759,6 @@ app.get('/api/notes/:id', auth, async (req, res) => {
 
 app.post('/api/notes/:id/annotations', auth, async (req, res) => {
   try {
-    // Verify note ownership
     const note = await prisma.note.findUnique({
       where: { id: req.params.id },
       select: { userId: true }
@@ -754,7 +807,6 @@ app.delete('/api/annotations/:id', auth, async (req, res) => {
 
 app.post('/api/links', auth, async (req, res) => {
   try {
-    // Verify both notes belong to user
     const notes = await prisma.note.findMany({
       where: {
         id: { in: [req.body.sourceId, req.body.targetId] },
@@ -808,4 +860,43 @@ app.delete('/api/links/:id', auth, async (req, res) => {
   }
 });
 
-app.listen(process.env.PORT, () => console.log(`Server running on port ${process.env.PORT}`));
+// Get all notes for sidebar (lightweight query)
+app.get('/api/notes', auth, async (req, res) => {
+  try {
+    const notes = await prisma.note.findMany({
+      where: { 
+        userId: req.userId,
+        archived: { not: true }
+      },
+      orderBy: { updatedAt: 'desc' },
+      select: { 
+        id: true, 
+        title: true, 
+        updatedAt: true, 
+        color: true,
+        type: true,
+        sticky: true,
+        ephemeral: true
+      }
+    });
+    res.json(notes);
+  } catch (error) {
+    console.error('Get notes error:', error);
+    res.status(500).json({ error: 'Failed to load notes' });
+  }
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ 
+    error: 'Internal server error',
+    message: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
+});
+
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📊 Health check available at http://localhost:${PORT}/health`);
+});
