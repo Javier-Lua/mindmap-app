@@ -1,0 +1,37 @@
+{
+  "name": "messy-notes-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tiptap/extension-color": "^2.0.0",
+    "@tiptap/extension-font-family": "^2.0.0",
+    "@tiptap/extension-highlight": "^2.0.0",
+    "@tiptap/extension-placeholder": "^2.0.0",
+    "@tiptap/extension-text-style": "^2.0.0",
+    "@tiptap/extension-typography": "^2.0.0",
+    "@tiptap/react": "^2.0.0",
+    "@tiptap/starter-kit": "^2.0.0",
+    "@tldraw/tldraw": "^2.0.0",
+    "axios": "^1.0.0",
+    "lucide-react": "^0.300.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-pdf": "^7.0.0",
+    "react-pdf-highlighter": "^6.0.0",
+    "react-router-dom": "^6.0.0",
+    "react-slider": "^2.0.0",
+    "react-speech-recognition": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.22",
+    "@vitejs/plugin-react": "^4.2.1",
+    "vite": "^5.1.0"
+  }
+}

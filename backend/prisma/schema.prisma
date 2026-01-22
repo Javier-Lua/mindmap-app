@@ -1,0 +1,81 @@
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String?
+  notes     Note[]
+  folders   Folder[]
+  clusters  Cluster[]
+}
+
+model Folder {
+  id        String   @id @default(uuid())
+  name      String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  notes     Note[]
+  parentId  String?
+  parent    Folder?  @relation("FolderTree", fields: [parentId], references: [id])
+  children  Folder[] @relation("FolderTree")
+}
+
+model Note {
+  id          String   @id @default(uuid())
+  title       String   @default("Untitled Thought")
+  content     Json?
+  rawText     String?  @db.Text
+  embedding   Unsupported("vector(384)")?
+  x           Float    @default(0)
+  y           Float    @default(0)
+  color       String   @default("#ffffff")
+  folderId    String?
+  folder      Folder?  @relation(fields: [folderId], references: [id])
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  outgoing    Link[]   @relation("Source")
+  incoming    Link[]   @relation("Target")
+  annotations Annotation[]
+  type        String   @default("text")
+  fileUrl     String?
+  clusters    Cluster[] @relation("NoteClusters")
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+}
+
+model Link {
+  id        String @id @default(uuid())
+  sourceId  String
+  targetId  String
+  source    Note   @relation("Source", fields: [sourceId], references: [id])
+  target    Note   @relation("Target", fields: [targetId], references: [id])
+  strength  Float  @default(1.0)
+  reason    String?
+  @@unique([sourceId, targetId])
+}
+
+model Annotation {
+  id        String @id @default(uuid())
+  noteId    String
+  note      Note   @relation(fields: [noteId], references: [id])
+  text      String
+  comment   String
+}
+
+model Cluster {
+  id     String @id @default(uuid())
+  name   String
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+  notes  Note[] @relation("NoteClusters")
+  @@unique([name, userId])
+}
