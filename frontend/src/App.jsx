@@ -8,25 +8,51 @@ import axios from 'axios';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
+// Add global axios interceptor for auth errors
+axios.interceptors.response.use(
+  response => response,
+  error => {
+    if (error.response?.data?.action === 'REAUTH_REQUIRED') {
+      // Clear local auth state and redirect to login
+      window.location.href = '/';
+    }
+    return Promise.reject(error);
+  }
+);
+
 export default function App() {
   const [authenticated, setAuthenticated] = useState(null);
   const [user, setUser] = useState(null);
   const [showQuickCapture, setShowQuickCapture] = useState(false);
+  const [authError, setAuthError] = useState(null);
 
   useEffect(() => {
-    axios.get(`${API}/api/me`, { withCredentials: true })
-      .then(res => {
-        setAuthenticated(true);
-        setUser(res.data);
-      })
-      .catch(() => setAuthenticated(false));
+    checkAuth();
   }, []);
+
+  const checkAuth = async () => {
+    try {
+      const res = await axios.get(`${API}/api/me`, { withCredentials: true });
+      setAuthenticated(true);
+      setUser(res.data);
+      setAuthError(null);
+    } catch (error) {
+      console.error('Auth check failed:', error);
+      setAuthenticated(false);
+      
+      if (error.response?.data?.action === 'REAUTH_REQUIRED') {
+        setAuthError(error.response.data.error || 'Please sign in again');
+      }
+    }
+  };
 
   useEffect(() => {
     const handleKeyDown = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         e.preventDefault();
-        setShowQuickCapture(true);
+        if (authenticated) {
+          setShowQuickCapture(true);
+        }
       }
       if (e.key === 'Escape') {
         setShowQuickCapture(false);
@@ -35,12 +61,15 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [authenticated]);
 
   if (authenticated === null) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 to-blue-50">
-        <div className="animate-pulse text-xl text-gray-600">Loading...</div>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
       </div>
     );
   }
@@ -48,11 +77,18 @@ export default function App() {
   if (!authenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 via-blue-50 to-pink-50">
-        <div className="text-center">
+        <div className="text-center max-w-md mx-4">
           <h1 className="text-6xl font-bold mb-4 bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">
             Messy Notes
           </h1>
           <p className="text-gray-600 mb-8 text-lg">Your thoughts, beautifully connected</p>
+          
+          {authError && (
+            <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-yellow-800 text-sm font-medium">{authError}</p>
+            </div>
+          )}
+          
           <a 
             href={`${API}/auth/google`}
             className="inline-flex items-center gap-3 bg-white px-8 py-4 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 border border-gray-200 text-lg font-medium"
@@ -65,6 +101,10 @@ export default function App() {
             </svg>
             Sign in with Google
           </a>
+          
+          <p className="mt-6 text-sm text-gray-500">
+            Free forever • No credit card required
+          </p>
         </div>
       </div>
     );
