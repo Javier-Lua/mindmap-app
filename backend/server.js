@@ -13,6 +13,76 @@ const jsonwebtoken = require('jsonwebtoken');
 const app = express();
 const prisma = new PrismaClient();
 
+// Simple in-memory cache for performance
+const cache = new Map();
+const CACHE_TTL = 30000; // 30 seconds
+
+const getCached = (key) => {
+  const item = cache.get(key);
+  if (item && Date.now() - item.time < CACHE_TTL) {
+    return item.data;
+  }
+  cache.delete(key);
+  return null;
+};
+
+const setCache = (key, data) => {
+  cache.set(key, { data, time: Date.now() });
+};
+
+// Request deduplication middleware
+const requestCache = new Map();
+const CACHE_DURATION = 1000; // 1 second
+
+const deduplicateRequests = (req, res, next) => {
+  if (req.method === 'GET') return next();
+  
+  const key = `${req.userId}-${req.method}-${req.path}-${JSON.stringify(req.body)}`;
+  const cached = requestCache.get(key);
+  
+  if (cached && Date.now() - cached.time < CACHE_DURATION) {
+    return res.json(cached.response);
+  }
+  
+  const originalJson = res.json.bind(res);
+  res.json = (data) => {
+    requestCache.set(key, { response: data, time: Date.now() });
+    setTimeout(() => requestCache.delete(key), CACHE_DURATION);
+    return originalJson(data);
+  };
+  
+  next();
+};
+
+// Performance monitoring and enhanced logging
+app.use((req, res, next) => {
+  req.startTime = Date.now();
+  
+  res.on('finish', () => {
+    const duration = Date.now() - req.startTime;
+    const timestamp = new Date().toISOString();
+    console.log(`[${timestamp}] ${req.method} ${req.path}`, {
+      userId: req.userId || 'unauthenticated',
+      duration: `${duration}ms`
+    });
+    if (duration > 1000) {
+      console.warn(`Slow request: ${req.method} ${req.path} took ${duration}ms`);
+    }
+  });
+  
+  next();
+});
+
+// Database connection check middleware (note: Prisma handles pooling, but this ensures connectivity)
+app.use((req, res, next) => {
+  prisma.$queryRaw`SELECT 1`
+    .then(() => next())
+    .catch(err => {
+      console.error('DB connection error:', err);
+      res.status(503).json({ error: 'Database unavailable' });
+    });
+});
+
 // Basic middleware
 app.use(cors({ 
   origin: process.env.FRONTEND_URL, 
@@ -20,13 +90,6 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '50mb' }));
 app.use(cookieParser());
-
-// Request logging middleware
-app.use((req, res, next) => {
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] ${req.method} ${req.path}`, req.userId || 'unauthenticated');
-  next();
-});
 
 // Rate limiting
 const requestCounts = new Map();
@@ -62,6 +125,7 @@ const rateLimiter = (req, res, next) => {
 };
 
 app.use('/api/', rateLimiter);
+app.use('/api/', deduplicateRequests);
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
@@ -257,38 +321,40 @@ app.put('/api/notes/:id', auth, async (req, res) => {
     if (sticky !== undefined) data.sticky = sticky;
     if (priority !== undefined) data.priority = priority;
     if (archived !== undefined) data.archived = archived;
-    
-    const note = await prisma.note.findUnique({
-      where: { id: req.params.id },
-      include: { incoming: true, outgoing: true }
-    });
-    
-    if (!note || note.userId !== req.userId) {
-      return res.status(404).json({ error: 'Note not found' });
-    }
-    
-    const linkCount = note.incoming.length + note.outgoing.length;
-    const daysSinceUpdate = (Date.now() - new Date(note.updatedAt).getTime()) / (1000 * 60 * 60 * 24);
-    data.weight = Math.max(0.2, 1 + (linkCount * 0.2) - (daysSinceUpdate * 0.05));
-    
-    if (plainText && plainText.trim()) {
-      const output = await extractor(plainText, { pooling: 'mean', normalize: true });
-      const embeddingArray = Array.from(output.data);
+
+    const updatedNote = await prisma.$transaction(async (tx) => {
+      const note = await tx.note.findUnique({
+        where: { id: req.params.id },
+        include: { incoming: true, outgoing: true }
+      });
       
-      await prisma.$executeRaw`
-        UPDATE "Note" 
-        SET embedding = ${embeddingArray}::vector 
-        WHERE id = ${req.params.id}
-      `;
-      
-      if (plainText.length > 20) {
-        data.ephemeral = false;
+      if (!note || note.userId !== req.userId) {
+        throw new Error('Note not found');
       }
-    }
-    
-    const updatedNote = await prisma.note.update({
-      where: { id: req.params.id },
-      data
+      
+      const linkCount = note.incoming.length + note.outgoing.length;
+      const daysSinceUpdate = (Date.now() - new Date(note.updatedAt).getTime()) / (1000 * 60 * 60 * 24);
+      data.weight = Math.max(0.2, 1 + (linkCount * 0.2) - (daysSinceUpdate * 0.05));
+      
+      if (plainText && plainText.trim()) {
+        const output = await extractor(plainText, { pooling: 'mean', normalize: true });
+        const embeddingArray = Array.from(output.data);
+        
+        await tx.$executeRaw`
+          UPDATE "Note" 
+          SET embedding = ${embeddingArray}::vector 
+          WHERE id = ${req.params.id}
+        `;
+        
+        if (plainText.length > 20) {
+          data.ephemeral = false;
+        }
+      }
+      
+      return await tx.note.update({
+        where: { id: req.params.id },
+        data
+      });
     });
     
     if (messyMode && plainText) {
@@ -860,9 +926,16 @@ app.delete('/api/links/:id', auth, async (req, res) => {
   }
 });
 
-// Get all notes for sidebar (lightweight query)
+// Get all notes for sidebar (lightweight query) with caching
 app.get('/api/notes', auth, async (req, res) => {
   try {
+    const cacheKey = `notes-${req.userId}`;
+    const cached = getCached(cacheKey);
+    
+    if (cached) {
+      return res.json(cached);
+    }
+    
     const notes = await prisma.note.findMany({
       where: { 
         userId: req.userId,
@@ -879,6 +952,8 @@ app.get('/api/notes', auth, async (req, res) => {
         ephemeral: true
       }
     });
+    
+    setCache(cacheKey, notes);
     res.json(notes);
   } catch (error) {
     console.error('Get notes error:', error);

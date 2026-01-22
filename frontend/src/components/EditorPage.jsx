@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useEditor, EditorContent, BubbleMenu } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Highlight from '@tiptap/extension-highlight';
@@ -10,18 +10,35 @@ import { Typography } from '@tiptap/extension-typography';
 import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
-  Sparkles, MessageSquare, Mic, Layout, 
+  Sparkles, MessageSquare, Layout, 
   Moon, Sun, Bold, Italic,
-  Highlighter, Link as LinkIcon, Trash2, Plus, X
+  Highlighter, Link as LinkIcon, Trash2, X, Save, Loader
 } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+
+// Debounce utility
+function useDebounce(callback, delay) {
+  const timeoutRef = useRef(null);
+
+  return useCallback((...args) => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+    timeoutRef.current = setTimeout(() => {
+      callback(...args);
+    }, delay);
+  }, [callback, delay]);
+}
 
 export default function EditorPage({ onUserLoad }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const [note, setNote] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [lastSaved, setLastSaved] = useState(null);
+  const [saveError, setSaveError] = useState(null);
   const [annotations, setAnnotations] = useState([]);
   const [linkerSuggestions, setLinkerSuggestions] = useState([]);
   const [showLinker, setShowLinker] = useState(false);
@@ -32,35 +49,8 @@ export default function EditorPage({ onUserLoad }) {
   const [selectedText, setSelectedText] = useState('');
   const [connections, setConnections] = useState({ incoming: [], outgoing: [] });
   const [isCreatingNote, setIsCreatingNote] = useState(false);
-
-  // Load or create note
-  useEffect(() => {
-    const loadOrCreateNote = async () => {
-      // Handle "new" note case
-      if (!id || id === 'new') {
-        await createNewNote();
-        return;
-      }
-
-      try {
-        setLoading(true);
-        const res = await axios.get(`${API}/api/notes/${id}`, { withCredentials: true });
-        setNote(res.data);
-        setAnnotations(res.data.annotations || []);
-        setConnections({
-          incoming: res.data.incoming || [],
-          outgoing: res.data.outgoing || []
-        });
-        setLoading(false);
-      } catch (error) {
-        console.error('Failed to load note:', error);
-        // If note doesn't exist, create a new one
-        await createNewNote();
-      }
-    };
-    
-    loadOrCreateNote();
-  }, [id]);
+  const saveQueueRef = useRef([]);
+  const isSavingRef = useRef(false);
 
   // Load user data
   useEffect(() => {
@@ -77,6 +67,35 @@ export default function EditorPage({ onUserLoad }) {
     loadUser();
   }, [onUserLoad]);
 
+  // Load or create note
+  useEffect(() => {
+    const loadOrCreateNote = async () => {
+      if (!id || id === 'new') {
+        await createNewNote();
+        return;
+      }
+
+      try {
+        setLoading(true);
+        const res = await axios.get(`${API}/api/notes/${id}`, { withCredentials: true });
+        setNote(res.data);
+        setAnnotations(res.data.annotations || []);
+        setConnections({
+          incoming: res.data.incoming || [],
+          outgoing: res.data.outgoing || []
+        });
+        setLastSaved(new Date());
+      } catch (error) {
+        console.error('Failed to load note:', error);
+        await createNewNote();
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    loadOrCreateNote();
+  }, [id]);
+
   const createNewNote = async () => {
     if (isCreatingNote) return;
     
@@ -89,17 +108,61 @@ export default function EditorPage({ onUserLoad }) {
       setNote(res.data);
       setAnnotations([]);
       setConnections({ incoming: [], outgoing: [] });
-      setLoading(false);
+      setLastSaved(new Date());
       
-      // Update URL to the new note's ID
       navigate(`/note/${res.data.id}`, { replace: true });
     } catch (error) {
       console.error('Failed to create note:', error);
-      setLoading(false);
+      setSaveError('Failed to create note');
     } finally {
+      setLoading(false);
       setIsCreatingNote(false);
     }
   };
+
+  // Queue-based save system to prevent race conditions
+  const processSaveQueue = async () => {
+    if (isSavingRef.current || saveQueueRef.current.length === 0) return;
+
+    isSavingRef.current = true;
+    setSaving(true);
+    setSaveError(null);
+
+    const saveData = saveQueueRef.current[saveQueueRef.current.length - 1];
+    saveQueueRef.current = [];
+
+    try {
+      await axios.put(`${API}/api/notes/${note.id}`, saveData, { 
+        withCredentials: true,
+        timeout: 10000 // 10 second timeout
+      });
+      setLastSaved(new Date());
+      setSaveError(null);
+    } catch (error) {
+      console.error('Save failed:', error);
+      setSaveError('Failed to save');
+      // Retry once after 2 seconds
+      setTimeout(() => {
+        saveQueueRef.current.push(saveData);
+        processSaveQueue();
+      }, 2000);
+    } finally {
+      setSaving(false);
+      isSavingRef.current = false;
+      
+      // Process next item if queue has more
+      if (saveQueueRef.current.length > 0) {
+        setTimeout(processSaveQueue, 100);
+      }
+    }
+  };
+
+  // Debounced save function
+  const debouncedSave = useDebounce((data) => {
+    if (!note?.id) return;
+    saveQueueRef.current.push(data);
+    processSaveQueue();
+  }, 1000); // Save after 1 second of no typing
 
   // Initialize editor
   const editor = useEditor({
@@ -119,18 +182,27 @@ export default function EditorPage({ onUserLoad }) {
       },
     },
     onUpdate: ({ editor }) => {
-      if (!note || !note.id) return;
+      if (!note?.id) return;
       
       const json = editor.getJSON();
       const text = editor.getText();
       const title = text.split('\n')[0].slice(0, 50) || 'Untitled Thought';
       
-      axios.put(`${API}/api/notes/${note.id}`, { 
+      // Optimistically update local state
+      setNote(prev => ({
+        ...prev,
+        title,
+        content: json,
+        rawText: text
+      }));
+      
+      // Queue save with debouncing
+      debouncedSave({ 
         content: json, 
         plainText: text, 
         title, 
         messyMode: true 
-      }, { withCredentials: true }).catch(err => console.error('Failed to save:', err));
+      });
     },
     onSelectionUpdate: ({ editor }) => {
       const { from, to } = editor.state.selection;
@@ -142,12 +214,19 @@ export default function EditorPage({ onUserLoad }) {
   // Set editor content when note loads
   useEffect(() => {
     if (editor && note?.content && !loading) {
-      editor.commands.setContent(note.content);
+      const currentContent = JSON.stringify(editor.getJSON());
+      const newContent = JSON.stringify(note.content);
+      
+      // Only update if content is different to avoid cursor jumps
+      if (currentContent !== newContent) {
+        editor.commands.setContent(note.content);
+      }
     }
-  }, [editor, note, loading]);
+  }, [editor, note?.id, loading]);
 
   const runLinker = async () => {
     if (!selectedText.trim() || !note?.id) return;
+    
     try {
       const res = await axios.post(`${API}/api/linker`, { 
         text: selectedText, 
@@ -162,30 +241,39 @@ export default function EditorPage({ onUserLoad }) {
 
   const addAnnotation = async () => {
     if (!selectedText.trim() || !note?.id) return;
+    
     try {
       const newAnn = { text: selectedText, comment: '' };
-      const res = await axios.post(`${API}/api/notes/${note.id}/annotations`, newAnn, { withCredentials: true });
+      const res = await axios.post(`${API}/api/notes/${note.id}/annotations`, newAnn, { 
+        withCredentials: true 
+      });
       setAnnotations([...annotations, res.data]);
     } catch (error) {
       console.error('Failed to add annotation:', error);
     }
   };
 
-  const updateAnnotation = async (ann, comment) => {
+  const updateAnnotation = useDebounce(async (ann, comment) => {
     try {
-      await axios.put(`${API}/api/annotations/${ann.id}`, { comment }, { withCredentials: true });
+      await axios.put(`${API}/api/annotations/${ann.id}`, { comment }, { 
+        withCredentials: true 
+      });
       setAnnotations(annotations.map(a => a.id === ann.id ? { ...a, comment } : a));
     } catch (error) {
       console.error('Failed to update annotation:', error);
     }
-  };
+  }, 500);
 
   const deleteAnnotation = async (annId) => {
     try {
-      await axios.delete(`${API}/api/annotations/${annId}`, { withCredentials: true });
+      // Optimistic update
       setAnnotations(annotations.filter(a => a.id !== annId));
+      await axios.delete(`${API}/api/annotations/${annId}`, { withCredentials: true });
     } catch (error) {
       console.error('Failed to delete annotation:', error);
+      // Reload annotations on error
+      const res = await axios.get(`${API}/api/notes/${note.id}`, { withCredentials: true });
+      setAnnotations(res.data.annotations || []);
     }
   };
 
@@ -199,6 +287,7 @@ export default function EditorPage({ onUserLoad }) {
       }, { withCredentials: true });
       setShowLinker(false);
       
+      // Reload connections
       const res = await axios.get(`${API}/api/notes/${note.id}`, { withCredentials: true });
       setConnections({
         incoming: res.data.incoming || [],
@@ -228,6 +317,30 @@ export default function EditorPage({ onUserLoad }) {
     <div className={`flex h-screen ${themeClass} overflow-hidden`}>
       {/* Left Sidebar - Annotations & Connections */}
       <div className={`w-80 border-r p-5 overflow-y-auto ${sidebarClass}`}>
+        {/* Save Status */}
+        <div className="mb-4 p-3 bg-opacity-10 rounded-lg border">
+          {saving && (
+            <div className="flex items-center gap-2 text-blue-400 border-blue-400">
+              <Loader size={14} className="animate-spin" />
+              <span className="text-xs">Saving...</span>
+            </div>
+          )}
+          {!saving && lastSaved && !saveError && (
+            <div className="flex items-center gap-2 text-green-400 border-green-400">
+              <Save size={14} />
+              <span className="text-xs">
+                Saved {new Date(lastSaved).toLocaleTimeString()}
+              </span>
+            </div>
+          )}
+          {saveError && (
+            <div className="flex items-center gap-2 text-red-400 border-red-400">
+              <X size={14} />
+              <span className="text-xs">{saveError}</span>
+            </div>
+          )}
+        </div>
+
         {/* Connections */}
         <div className="mb-6">
           <h3 className="font-semibold text-gray-400 text-xs uppercase tracking-wider mb-3 flex items-center gap-2">
@@ -291,7 +404,7 @@ export default function EditorPage({ onUserLoad }) {
               <textarea
                 className="w-full text-sm bg-transparent focus:outline-none resize-none text-gray-300"
                 placeholder="Add your comment..."
-                value={ann.comment || ''}
+                defaultValue={ann.comment || ''}
                 onChange={(e) => updateAnnotation(ann, e.target.value)}
                 rows="2"
               />
@@ -333,7 +446,6 @@ export default function EditorPage({ onUserLoad }) {
           {editor && (
             <BubbleMenu editor={editor} tippyOptions={{ duration: 100 }}>
               <div className="bg-[#2a2d2e] text-white rounded-lg px-3 py-2 flex items-center gap-1.5 shadow-xl border border-[#3d3d3d]">
-                {/* Text Formatting */}
                 <button
                   onClick={() => editor.chain().focus().toggleBold().run()}
                   className={`p-1.5 rounded hover:bg-[#37373d] transition-colors ${editor.isActive('bold') ? 'bg-[#37373d]' : ''}`}
@@ -358,7 +470,6 @@ export default function EditorPage({ onUserLoad }) {
 
                 <div className="w-px h-5 bg-[#3d3d3d] mx-1" />
 
-                {/* Font Size */}
                 <select
                   onChange={(e) => setFontSize(parseInt(e.target.value))}
                   value={fontSize}
@@ -372,7 +483,6 @@ export default function EditorPage({ onUserLoad }) {
                   <option value="24">24</option>
                 </select>
 
-                {/* Text Color */}
                 <input
                   type="color"
                   onInput={(e) => editor.chain().focus().setColor(e.target.value).run()}
@@ -382,20 +492,20 @@ export default function EditorPage({ onUserLoad }) {
 
                 <div className="w-px h-5 bg-[#3d3d3d] mx-1" />
 
-                {/* Linker */}
                 <button
                   onClick={runLinker}
-                  className="flex items-center gap-1 px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded transition-colors"
+                  disabled={!selectedText.trim()}
+                  className="flex items-center gap-1 px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Find related notes"
                 >
                   <Sparkles size={12} />
                   <span className="text-xs font-medium">Link</span>
                 </button>
 
-                {/* Annotate */}
                 <button
                   onClick={addAnnotation}
-                  className="flex items-center gap-1 px-2 py-1 bg-yellow-600 hover:bg-yellow-700 rounded transition-colors"
+                  disabled={!selectedText.trim()}
+                  className="flex items-center gap-1 px-2 py-1 bg-yellow-600 hover:bg-yellow-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Add annotation"
                 >
                   <MessageSquare size={12} />

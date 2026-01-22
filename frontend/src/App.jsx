@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import { 
   FileText, Home, Network, Search, Plus, Folder, 
   LogOut, Star, Clock, Archive, ChevronRight, ChevronDown,
-  LayoutGrid, Zap
+  LayoutGrid, Zap, RefreshCw, Loader
 } from 'lucide-react';
 
 // Import components
@@ -26,40 +26,67 @@ axios.interceptors.response.use(
   }
 );
 
-function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout }) {
+function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refreshTrigger }) {
   const [notes, setNotes] = useState([]);
   const [folders, setFolders] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSection, setActiveSection] = useState('recent');
   const [expandedFolders, setExpandedFolders] = useState(new Set());
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    loadNotes();
-    loadFolders();
+  const loadNotes = useCallback(async (showLoader = false) => {
+    if (showLoader) {
+      setIsLoading(true);
+    } else {
+      setIsRefreshing(true);
+    }
     
-    // Refresh notes every 30 seconds
-    const interval = setInterval(loadNotes, 30000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const loadNotes = async () => {
     try {
-      const res = await axios.get(`${API}/api/notes`, { withCredentials: true });
+      const res = await axios.get(`${API}/api/notes`, { 
+        withCredentials: true,
+        timeout: 10000
+      });
       setNotes(res.data);
     } catch (error) {
       console.error('Failed to load notes:', error);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
     }
-  };
+  }, []);
 
-  const loadFolders = async () => {
+  const loadFolders = useCallback(async () => {
     try {
-      const res = await axios.get(`${API}/api/home`, { withCredentials: true });
+      const res = await axios.get(`${API}/api/home`, { 
+        withCredentials: true,
+        timeout: 10000
+      });
       setFolders(res.data.folders);
     } catch (error) {
       console.error('Failed to load folders:', error);
     }
-  };
+  }, []);
+
+  // Initial load
+  useEffect(() => {
+    loadNotes(true);
+    loadFolders();
+  }, [loadNotes, loadFolders]);
+
+  // Refresh when trigger changes (note created/updated)
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      loadNotes(false);
+    }
+  }, [refreshTrigger, loadNotes]);
+
+  // Auto-refresh every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(() => loadNotes(false), 30000);
+    return () => clearInterval(interval);
+  }, [loadNotes]);
 
   const filteredNotes = notes.filter(n => 
     n.title.toLowerCase().includes(searchQuery.toLowerCase())
@@ -96,13 +123,23 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout }) {
       <div className="p-4 border-b border-[#3d3d3d]">
         <div className="flex items-center justify-between mb-3">
           <h1 className="text-sm font-semibold text-gray-100">Messy Notes</h1>
-          <button
-            onClick={onLogout}
-            className="p-1.5 hover:bg-[#3d3d3d] rounded transition-colors"
-            title="Logout"
-          >
-            <LogOut size={14} />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => loadNotes(false)}
+              disabled={isRefreshing}
+              className="p-1.5 hover:bg-[#3d3d3d] rounded transition-colors disabled:opacity-50"
+              title="Refresh"
+            >
+              <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
+            </button>
+            <button
+              onClick={onLogout}
+              className="p-1.5 hover:bg-[#3d3d3d] rounded transition-colors"
+              title="Logout"
+            >
+              <LogOut size={14} />
+            </button>
+          </div>
         </div>
         
         {/* Search */}
@@ -218,32 +255,41 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout }) {
         {/* Notes List */}
         <div className="px-2 pb-4">
           <div className="text-[10px] uppercase tracking-wider text-gray-500 px-2 py-1 mb-1">
-            Notes
+            Notes {isLoading && <Loader size={10} className="inline animate-spin ml-1" />}
           </div>
-          {getDisplayNotes().map(note => (
-            <button
-              key={note.id}
-              onClick={() => onSelectNote(note.id)}
-              className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors group ${
-                currentNoteId === note.id ? 'bg-[#37373d] text-white' : 'hover:bg-[#2a2d2e]'
-              }`}
-            >
-              <FileText size={12} className={note.sticky ? 'text-yellow-400' : 'text-gray-500'} />
-              <div className="flex-1 min-w-0">
-                <div className="truncate">{note.title}</div>
-                <div className="text-[10px] text-gray-500">
-                  {new Date(note.updatedAt).toLocaleDateString()}
-                </div>
-              </div>
-              {note.sticky && <Star size={10} className="text-yellow-400" fill="currentColor" />}
-              {note.ephemeral && <Zap size={10} className="text-gray-500" />}
-            </button>
-          ))}
           
-          {getDisplayNotes().length === 0 && (
-            <div className="px-2 py-4 text-center text-xs text-gray-500">
-              No notes found
+          {isLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader size={20} className="animate-spin text-gray-500" />
             </div>
+          ) : (
+            <>
+              {getDisplayNotes().map(note => (
+                <button
+                  key={note.id}
+                  onClick={() => onSelectNote(note.id)}
+                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors group ${
+                    currentNoteId === note.id ? 'bg-[#37373d] text-white' : 'hover:bg-[#2a2d2e]'
+                  }`}
+                >
+                  <FileText size={12} className={note.sticky ? 'text-yellow-400' : 'text-gray-500'} />
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate">{note.title}</div>
+                    <div className="text-[10px] text-gray-500">
+                      {new Date(note.updatedAt).toLocaleDateString()}
+                    </div>
+                  </div>
+                  {note.sticky && <Star size={10} className="text-yellow-400" fill="currentColor" />}
+                  {note.ephemeral && <Zap size={10} className="text-gray-500" />}
+                </button>
+              ))}
+              
+              {getDisplayNotes().length === 0 && (
+                <div className="px-2 py-4 text-center text-xs text-gray-500">
+                  No notes found
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -268,6 +314,8 @@ function MainLayout() {
   const [user, setUser] = useState(null);
   const [showQuickCapture, setShowQuickCapture] = useState(false);
   const [currentNoteId, setCurrentNoteId] = useState(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [isCreatingNote, setIsCreatingNote] = useState(false);
   const navigate = useNavigate();
   const params = useParams();
 
@@ -293,12 +341,22 @@ function MainLayout() {
   }, []);
 
   const handleNewNote = async () => {
+    if (isCreatingNote) return;
+    
+    setIsCreatingNote(true);
     try {
-      const res = await axios.post(`${API}/api/notes`, {}, { withCredentials: true });
+      const res = await axios.post(`${API}/api/notes`, {}, { 
+        withCredentials: true,
+        timeout: 10000
+      });
       navigate(`/note/${res.data.id}`);
       setCurrentNoteId(res.data.id);
+      setRefreshTrigger(prev => prev + 1);
     } catch (error) {
       console.error('Failed to create note:', error);
+      alert('Failed to create note. Please try again.');
+    } finally {
+      setIsCreatingNote(false);
     }
   };
 
@@ -316,6 +374,11 @@ function MainLayout() {
     }
   };
 
+  const handleQuickCaptureClose = () => {
+    setShowQuickCapture(false);
+    setRefreshTrigger(prev => prev + 1);
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-[#1e1e1e]">
       <Sidebar
@@ -324,12 +387,30 @@ function MainLayout() {
         onSelectNote={handleSelectNote}
         onNewNote={handleNewNote}
         onLogout={handleLogout}
+        refreshTrigger={refreshTrigger}
       />
       
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden relative">
+        {isCreatingNote && (
+          <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-[#252526] rounded-lg p-6 flex items-center gap-3">
+              <Loader className="animate-spin text-blue-500" size={24} />
+              <span className="text-white">Creating note...</span>
+            </div>
+          </div>
+        )}
+        
         <Routes>
           <Route path="/" element={<Navigate to="/note/new" replace />} />
-          <Route path="/note/:id" element={<EditorPage onUserLoad={setUser} />} />
+          <Route 
+            path="/note/:id" 
+            element={
+              <EditorPage 
+                onUserLoad={setUser} 
+                onNoteUpdate={() => setRefreshTrigger(prev => prev + 1)}
+              />
+            } 
+          />
           <Route path="/dashboard" element={<Dashboard user={user} />} />
           <Route path="/mindmap" element={<MessyMap />} />
           <Route path="/mindmap/:folderId" element={<MessyMap />} />
@@ -338,7 +419,7 @@ function MainLayout() {
       </div>
 
       {showQuickCapture && (
-        <QuickCapture onClose={() => setShowQuickCapture(false)} />
+        <QuickCapture onClose={handleQuickCaptureClose} />
       )}
     </div>
   );
@@ -355,7 +436,10 @@ export default function App() {
 
   const checkAuth = async () => {
     try {
-      const res = await axios.get(`${API}/api/me`, { withCredentials: true });
+      const res = await axios.get(`${API}/api/me`, { 
+        withCredentials: true,
+        timeout: 10000
+      });
       setAuthenticated(true);
       setUser(res.data);
       setAuthError(null);
