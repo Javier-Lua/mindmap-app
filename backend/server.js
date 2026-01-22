@@ -37,13 +37,12 @@ passport.use(new GoogleStrategy({
     create: { email: profile.emails[0].value, name: profile.displayName }
   });
   
-  // Create starter notes for new users
   const noteCount = await prisma.note.count({ where: { userId: user.id } });
   if (noteCount === 0) {
     const starterNotes = [
-      { title: 'Welcome to Messy Notes', rawText: 'Click anywhere on the mindmap to create new notes. Your thoughts will connect automatically as you write.', content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Click anywhere on the mindmap to create new notes. Your thoughts will connect automatically as you write.' }] }] }, x: 100, y: 100, color: '#FEF3C7' },
-      { title: 'Quick Tips', rawText: 'Use Ctrl+K for quick capture, highlight text to link notes, and explore Focus Mode to see connections clearly.', content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Use Ctrl+K for quick capture, highlight text to link notes, and explore Focus Mode to see connections clearly.' }] }] }, x: 400, y: 150, color: '#DBEAFE' },
-      { title: 'Your First Idea', rawText: 'Start typing your thoughts here. Messy Notes will help you connect them.', content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Start typing your thoughts here. Messy Notes will help you connect them.' }] }] }, x: 250, y: 300, color: '#E0E7FF' }
+      { title: 'Welcome to Messy Notes', rawText: 'Drop anything here - thoughts, files, links. We\'ll help you make sense of it later.', content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Drop anything here - thoughts, files, links. We\'ll help you make sense of it later.' }] }] }, x: 100, y: 100, color: '#FEF3C7' },
+      { title: 'Brain Dump Zone', rawText: 'Quick capture with Ctrl+K. Everything is auto-saved and searchable.', content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Quick capture with Ctrl+K. Everything is auto-saved and searchable.' }] }] }, x: 400, y: 150, color: '#DBEAFE', ephemeral: true },
+      { title: 'Organize Later', rawText: 'Use Smart Tidy to auto-group related notes when you\'re ready.', content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Use Smart Tidy to auto-group related notes when you\'re ready.' }] }] }, x: 250, y: 300, color: '#E0E7FF' }
     ];
     for (const note of starterNotes) {
       await prisma.note.create({ data: { ...note, userId: user.id } });
@@ -110,7 +109,8 @@ app.post('/api/upload', auth, async (req, res) => {
       fileUrl: url,
       title: fileName,
       x: Math.random() * 500,
-      y: Math.random() * 500
+      y: Math.random() * 500,
+      ephemeral: true // New uploads are ephemeral by default
     }
   });
   res.json(note);
@@ -124,14 +124,17 @@ app.post('/api/notes', auth, async (req, res) => {
       y: req.body.y || Math.random() * 500,
       folderId: req.body.folderId,
       type: req.body.type || 'text',
-      color: req.body.color || '#FFFFFF'
+      color: req.body.color || '#FFFFFF',
+      ephemeral: req.body.ephemeral !== false, // Default to ephemeral
+      priority: req.body.priority || 0,
+      weight: 1.0
     }
   });
   res.json(note);
 });
 
 app.put('/api/notes/:id', auth, async (req, res) => {
-  const { content, plainText, title, messyMode, x, y, color } = req.body;
+  const { content, plainText, title, messyMode, x, y, color, ephemeral, sticky, priority, archived } = req.body;
   let data = {};
   
   if (content !== undefined) data.content = content;
@@ -140,27 +143,47 @@ app.put('/api/notes/:id', auth, async (req, res) => {
   if (x !== undefined) data.x = x;
   if (y !== undefined) data.y = y;
   if (color !== undefined) data.color = color;
+  if (ephemeral !== undefined) data.ephemeral = ephemeral;
+  if (sticky !== undefined) data.sticky = sticky;
+  if (priority !== undefined) data.priority = priority;
+  if (archived !== undefined) data.archived = archived;
+  
+  // Calculate weight based on links and recency
+  const note = await prisma.note.findUnique({
+    where: { id: req.params.id },
+    include: { incoming: true, outgoing: true }
+  });
+  
+  if (note) {
+    const linkCount = note.incoming.length + note.outgoing.length;
+    const daysSinceUpdate = (Date.now() - new Date(note.updatedAt).getTime()) / (1000 * 60 * 60 * 24);
+    data.weight = Math.max(0.2, 1 + (linkCount * 0.2) - (daysSinceUpdate * 0.05));
+  }
   
   if (plainText && plainText.trim()) {
     const output = await extractor(plainText, { pooling: 'mean', normalize: true });
     const embeddingArray = Array.from(output.data);
     
-    // Update embedding using raw SQL since it's Unsupported type
     await prisma.$executeRaw`
       UPDATE "Note" 
       SET embedding = ${embeddingArray}::vector 
       WHERE id = ${req.params.id}
     `;
+    
+    // Mark as non-ephemeral if it has content
+    if (plainText.length > 20) {
+      data.ephemeral = false;
+    }
   }
   
-  const note = await prisma.note.update({
+  const updatedNote = await prisma.note.update({
     where: { id: req.params.id },
     data
   });
   
   if (messyMode && plainText) {
     const allNotes = await prisma.note.findMany({ 
-      where: { userId: req.userId, id: { not: note.id } }, 
+      where: { userId: req.userId, id: { not: updatedNote.id }, archived: { not: true } }, 
       select: { id: true, title: true, rawText: true } 
     });
     
@@ -169,9 +192,9 @@ app.put('/api/notes/:id', auth, async (req, res) => {
       const titleLower = otherNote.title.toLowerCase();
       const rawTextLower = (otherNote.rawText || '').toLowerCase();
       
-      if (plainTextLower.includes(titleLower) || rawTextLower.includes(note.title.toLowerCase())) {
+      if (plainTextLower.includes(titleLower) || rawTextLower.includes(updatedNote.title.toLowerCase())) {
         const existingLink = await prisma.link.findUnique({
-          where: { sourceId_targetId: { sourceId: note.id, targetId: otherNote.id } }
+          where: { sourceId_targetId: { sourceId: updatedNote.id, targetId: otherNote.id } }
         });
         
         if (existingLink) {
@@ -182,7 +205,7 @@ app.put('/api/notes/:id', auth, async (req, res) => {
         } else {
           await prisma.link.create({
             data: { 
-              sourceId: note.id, 
+              sourceId: updatedNote.id, 
               targetId: otherNote.id, 
               reason: `Both mention "${titleLower}"`,
               strength: 1.0 
@@ -193,7 +216,7 @@ app.put('/api/notes/:id', auth, async (req, res) => {
     }
   }
   
-  res.json(note);
+  res.json(updatedNote);
 });
 
 app.delete('/api/notes/:id', auth, async (req, res) => {
@@ -203,16 +226,42 @@ app.delete('/api/notes/:id', auth, async (req, res) => {
   res.json({ success: true });
 });
 
+// Batch update for undo/redo
+app.post('/api/notes/batch', auth, async (req, res) => {
+  const { operations } = req.body;
+  const results = [];
+  
+  for (const op of operations) {
+    if (op.type === 'update') {
+      const result = await prisma.note.update({
+        where: { id: op.id },
+        data: op.data
+      });
+      results.push(result);
+    } else if (op.type === 'create') {
+      const result = await prisma.note.create({
+        data: { ...op.data, userId: req.userId }
+      });
+      results.push(result);
+    } else if (op.type === 'delete') {
+      await prisma.link.deleteMany({ where: { OR: [{ sourceId: op.id }, { targetId: op.id }] } });
+      await prisma.note.delete({ where: { id: op.id } });
+      results.push({ id: op.id, deleted: true });
+    }
+  }
+  
+  res.json({ results });
+});
+
 app.post('/api/linker', auth, async (req, res) => {
   const { text, noteId } = req.body;
   const output = await extractor(text, { pooling: 'mean', normalize: true });
   const vector = Array.from(output.data);
   
-  // Cast distance calculation but don't select the embedding column
   const suggestions = await prisma.$queryRaw`
     SELECT id, title, "rawText", (embedding <-> ${vector}::vector) as distance
     FROM "Note"
-    WHERE "userId" = ${req.userId} AND id != ${noteId} AND embedding IS NOT NULL
+    WHERE "userId" = ${req.userId} AND id != ${noteId} AND embedding IS NOT NULL AND archived IS NOT TRUE
     ORDER BY distance ASC
     LIMIT 5`;
   
@@ -232,12 +281,12 @@ app.get('/api/home', auth, async (req, res) => {
     include: { _count: { select: { notes: true } } }
   });
   const recentNotes = await prisma.note.findMany({
-    where: { userId: req.userId },
+    where: { userId: req.userId, archived: { not: true } },
     orderBy: { updatedAt: 'desc' },
     take: 8,
     select: { id: true, title: true, updatedAt: true, color: true, type: true }
   });
-  const totalNotes = await prisma.note.count({ where: { userId: req.userId } });
+  const totalNotes = await prisma.note.count({ where: { userId: req.userId, archived: { not: true } } });
   const totalLinks = await prisma.link.count({ 
     where: { source: { userId: req.userId } } 
   });
@@ -275,16 +324,18 @@ app.delete('/api/folders/:id', auth, async (req, res) => {
 });
 
 app.get('/api/mindmap', auth, async (req, res) => {
-  const { folderId } = req.query;
+  const { folderId, showArchived } = req.query;
   const where = { userId: req.userId };
   if (folderId && folderId !== 'undefined') where.folderId = folderId;
+  if (!showArchived || showArchived === 'false') where.archived = { not: true };
   
   const notes = await prisma.note.findMany({
     where,
     select: { 
       id: true, title: true, x: true, y: true, color: true, 
       type: true, fileUrl: true, createdAt: true, updatedAt: true,
-      rawText: true
+      rawText: true, ephemeral: true, sticky: true, priority: true,
+      weight: true, archived: true
     }
   });
   
@@ -303,15 +354,33 @@ app.get('/api/mindmap', auth, async (req, res) => {
 });
 
 app.get('/api/search', auth, async (req, res) => {
-  const { query } = req.query;
+  const { query, fuzzy } = req.query;
+  
+  if (fuzzy === 'true') {
+    // Fuzzy text search
+    const results = await prisma.note.findMany({
+      where: {
+        userId: req.userId,
+        archived: { not: true },
+        OR: [
+          { title: { contains: query, mode: 'insensitive' } },
+          { rawText: { contains: query, mode: 'insensitive' } }
+        ]
+      },
+      take: 20,
+      select: { id: true, title: true, rawText: true, x: true, y: true }
+    });
+    return res.json(results);
+  }
+  
+  // Semantic search
   const output = await extractor(query, { pooling: 'mean', normalize: true });
   const vector = Array.from(output.data);
   
-  // Don't select the embedding column, just use it for distance calculation
   const results = await prisma.$queryRaw`
-    SELECT id, title, "rawText", (embedding <-> ${vector}::vector) as distance
+    SELECT id, title, "rawText", x, y, (embedding <-> ${vector}::vector) as distance
     FROM "Note"
-    WHERE "userId" = ${req.userId} AND embedding IS NOT NULL
+    WHERE "userId" = ${req.userId} AND embedding IS NOT NULL AND archived IS NOT TRUE
     ORDER BY distance ASC
     LIMIT 10`;
   
@@ -322,20 +391,19 @@ app.get('/api/search', auth, async (req, res) => {
 });
 
 app.post('/api/cluster', auth, async (req, res) => {
-  // Get embeddings as text representation, then parse
+  const { preview } = req.body;
+  
   const notes = await prisma.$queryRaw`
-    SELECT id, title, embedding::text as embedding_text
+    SELECT id, title, x, y, embedding::text as embedding_text
     FROM "Note"
-    WHERE "userId" = ${req.userId} AND embedding IS NOT NULL
+    WHERE "userId" = ${req.userId} AND embedding IS NOT NULL AND archived IS NOT TRUE
   `;
   
   if (notes.length < 3) {
     return res.json({ message: 'Not enough notes to cluster', clusters: [] });
   }
   
-  // Parse PostgreSQL vector format: [1,2,3,...] to JavaScript array
   const embeddings = notes.map(n => {
-    // Remove brackets and split by comma
     const vectorStr = n.embedding_text.replace(/[\[\]]/g, '');
     return vectorStr.split(',').map(parseFloat);
   });
@@ -348,18 +416,73 @@ app.post('/api/cluster', auth, async (req, res) => {
     if (!clusters[clusterIdx]) clusters[clusterIdx] = [];
     clusters[clusterIdx].push({
       id: notes[i].id,
-      title: notes[i].title
+      title: notes[i].title,
+      x: parseFloat(notes[i].x),
+      y: parseFloat(notes[i].y)
     });
   });
   
-  const clusterData = Object.entries(clusters).map(([idx, noteList]) => ({
-    id: idx,
-    name: `Cluster ${parseInt(idx) + 1}`,
-    notes: noteList,
-    color: ['#FEE2E2', '#DBEAFE', '#E0E7FF', '#FCE7F3', '#FEF3C7'][parseInt(idx) % 5]
-  }));
+  const clusterData = Object.entries(clusters).map(([idx, noteList]) => {
+    // Calculate cluster center
+    const centerX = noteList.reduce((sum, n) => sum + n.x, 0) / noteList.length;
+    const centerY = noteList.reduce((sum, n) => sum + n.y, 0) / noteList.length;
+    
+    return {
+      id: idx,
+      name: `Cluster ${parseInt(idx) + 1}`,
+      notes: noteList,
+      centerX,
+      centerY,
+      color: ['#FEE2E2', '#DBEAFE', '#E0E7FF', '#FCE7F3', '#FEF3C7'][parseInt(idx) % 5]
+    };
+  });
   
-  res.json({ clusters: clusterData });
+  if (!preview) {
+    // Apply clustering - arrange notes in circular pattern around center
+    for (const cluster of clusterData) {
+      const radius = Math.min(150, cluster.notes.length * 30);
+      const angleStep = (2 * Math.PI) / cluster.notes.length;
+      
+      for (let i = 0; i < cluster.notes.length; i++) {
+        const angle = i * angleStep;
+        const newX = cluster.centerX + radius * Math.cos(angle);
+        const newY = cluster.centerY + radius * Math.sin(angle);
+        
+        await prisma.note.update({
+          where: { id: cluster.notes[i].id },
+          data: { x: newX, y: newY }
+        });
+      }
+    }
+  }
+  
+  res.json({ clusters: clusterData, preview });
+});
+
+app.post('/api/auto-archive', auth, async (req, res) => {
+  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  
+  const ephemeralNotes = await prisma.note.findMany({
+    where: {
+      userId: req.userId,
+      ephemeral: true,
+      updatedAt: { lt: twoDaysAgo },
+      archived: { not: true }
+    }
+  });
+  
+  // Archive ephemeral notes older than 2 days
+  await prisma.note.updateMany({
+    where: {
+      userId: req.userId,
+      ephemeral: true,
+      updatedAt: { lt: twoDaysAgo },
+      archived: { not: true }
+    },
+    data: { archived: true }
+  });
+  
+  res.json({ archivedCount: ephemeralNotes.length, notes: ephemeralNotes });
 });
 
 app.get('/api/rediscover', auth, async (req, res) => {
@@ -367,7 +490,8 @@ app.get('/api/rediscover', auth, async (req, res) => {
   
   const orphans = await prisma.note.findMany({
     where: { 
-      userId: req.userId, 
+      userId: req.userId,
+      archived: { not: true },
       AND: [
         { incoming: { none: {} } },
         { outgoing: { none: {} } },
@@ -382,6 +506,7 @@ app.get('/api/rediscover', auth, async (req, res) => {
   const weakConnections = await prisma.note.findMany({
     where: {
       userId: req.userId,
+      archived: { not: true },
       updatedAt: { lt: oneWeekAgo }
     },
     include: {
@@ -393,7 +518,7 @@ app.get('/api/rediscover', auth, async (req, res) => {
   
   const surprisingConnections = await prisma.link.findMany({
     where: {
-      source: { userId: req.userId },
+      source: { userId: req.userId, archived: { not: true } },
       strength: { gte: 3 }
     },
     include: {
@@ -408,42 +533,6 @@ app.get('/api/rediscover', auth, async (req, res) => {
     weakConnections: weakConnections.filter(n => (n.incoming.length + n.outgoing.length) <= 2),
     surprisingConnections
   });
-});
-
-app.post('/api/rediscover/email', auth, async (req, res) => {
-  const user = await prisma.user.findUnique({ where: { id: req.userId } });
-  const data = await prisma.note.findMany({
-    where: { 
-      userId: req.userId,
-      AND: [
-        { incoming: { none: {} } },
-        { outgoing: { none: {} } }
-      ]
-    },
-    take: 5
-  });
-  
-  if (process.env.NODEMAILER_USER && process.env.NODEMAILER_PASS) {
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: process.env.NODEMAILER_USER, pass: process.env.NODEMAILER_PASS }
-    });
-    
-    await transporter.sendMail({
-      from: process.env.NODEMAILER_USER,
-      to: user.email,
-      subject: 'Forgotten Notes from Messy Notes',
-      html: `
-        <h2>Notes you haven't connected yet:</h2>
-        <ul>
-          ${data.map(n => `<li><strong>${n.title}</strong></li>`).join('')}
-        </ul>
-        <p>Visit Messy Notes to reconnect your thoughts!</p>
-      `
-    });
-  }
-  
-  res.json({ success: true });
 });
 
 app.get('/api/notes/:id', auth, async (req, res) => {

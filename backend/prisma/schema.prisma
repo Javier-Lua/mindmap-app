@@ -48,6 +48,14 @@ model Note {
   type        String   @default("text")
   fileUrl     String?
   clusters    Cluster[] @relation("NoteClusters")
+  
+  // New fields for messy-person workflow
+  ephemeral   Boolean  @default(true)   // Auto-archive after inactivity
+  sticky      Boolean  @default(false)  // Never auto-archive
+  priority    Int      @default(0)      // User-set priority
+  weight      Float    @default(1.0)    // Calculated importance
+  archived    Boolean  @default(false)  // Archived status
+  
   updatedAt   DateTime @updatedAt
   createdAt   DateTime @default(now())
 }
@@ -56,8 +64,8 @@ model Link {
   id        String @id @default(uuid())
   sourceId  String
   targetId  String
-  source    Note   @relation("Source", fields: [sourceId], references: [id])
-  target    Note   @relation("Target", fields: [targetId], references: [id])
+  source    Note   @relation("Source", fields: [sourceId], references: [id], onDelete: Cascade)
+  target    Note   @relation("Target", fields: [targetId], references: [id], onDelete: Cascade)
   strength  Float  @default(1.0)
   reason    String?
   @@unique([sourceId, targetId])
@@ -66,7 +74,7 @@ model Link {
 model Annotation {
   id        String @id @default(uuid())
   noteId    String
-  note      Note   @relation(fields: [noteId], references: [id])
+  note      Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
   text      String
   comment   String
 }
