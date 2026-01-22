@@ -26,15 +26,72 @@ export default function MessyMap() {
   const [showOrphans, setShowOrphans] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
   const [draggingNode, setDraggingNode] = useState(null);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
+  const [mouseDownPos, setMouseDownPos] = useState(null);
+  const [hasMoved, setHasMoved] = useState(false);
 
   useEffect(() => {
     loadData();
     loadRediscover();
   }, [folderId]);
+
+  // Lock body scroll when on mindmap
+  useEffect(() => {
+    // Prevent body scroll
+    document.body.style.overflow = 'hidden';
+    document.body.style.position = 'fixed';
+    document.body.style.width = '100%';
+    document.body.style.height = '100%';
+    
+    // Prevent zoom on mobile
+    const viewport = document.querySelector('meta[name=viewport]');
+    const originalViewport = viewport?.getAttribute('content');
+    if (viewport) {
+      viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+    }
+
+    return () => {
+      // Restore on unmount
+      document.body.style.overflow = '';
+      document.body.style.position = '';
+      document.body.style.width = '';
+      document.body.style.height = '';
+      if (viewport && originalViewport) {
+        viewport.setAttribute('content', originalViewport);
+      }
+    };
+  }, []);
+
+  // Prevent browser zoom more aggressively
+  useEffect(() => {
+    const preventZoom = (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+    };
+    
+    const preventKeyboardZoom = (e) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === '+' || e.key === '-' || e.key === '=' || e.key === '0')) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+    };
+    
+    document.addEventListener('wheel', preventZoom, { passive: false, capture: true });
+    document.addEventListener('keydown', preventKeyboardZoom, { passive: false, capture: true });
+    
+    return () => {
+      document.removeEventListener('wheel', preventZoom, { capture: true });
+      document.removeEventListener('keydown', preventKeyboardZoom, { capture: true });
+    };
+  }, []);
 
   const loadData = async () => {
     try {
@@ -54,7 +111,6 @@ export default function MessyMap() {
       }
     } catch (error) {
       console.error('Failed to load mindmap data:', error);
-      // Don't clear existing data on error
     }
   };
 
@@ -84,7 +140,6 @@ export default function MessyMap() {
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) {
-      // Clear highlights
       setNodes(prevNodes => prevNodes.map(n => ({ ...n, highlighted: false })));
       return;
     }
@@ -139,27 +194,49 @@ export default function MessyMap() {
   };
 
   const handleCanvasClick = (e) => {
-    if (e.target === canvasRef.current) {
+    if (e.target === canvasRef.current && !hasMoved && mouseDownPos) {
       const rect = canvasRef.current.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
+      const x = (e.clientX - rect.left - panOffset.x) / zoom;
+      const y = (e.clientY - rect.top - panOffset.y) / zoom;
       createNote(x, y);
     }
+    setMouseDownPos(null);
+    setHasMoved(false);
   };
 
   const handleMouseDown = (e, node) => {
     if (e.button === 0) {
       e.stopPropagation();
+      setMouseDownPos({ x: e.clientX, y: e.clientY });
+      setHasMoved(false);
+      
+      const rect = canvasRef.current.getBoundingClientRect();
+      const nodeScreenX = node.x * zoom + panOffset.x;
+      const nodeScreenY = node.y * zoom + panOffset.y;
+      
+      setDragOffset({
+        x: e.clientX - rect.left - nodeScreenX,
+        y: e.clientY - rect.top - nodeScreenY
+      });
+      
       setDraggingNode(node);
       setSelectedNode(node);
     }
   };
 
   const handleMouseMove = (e) => {
+    if (mouseDownPos) {
+      const dx = e.clientX - mouseDownPos.x;
+      const dy = e.clientY - mouseDownPos.y;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+        setHasMoved(true);
+      }
+    }
+
     if (draggingNode) {
       const rect = canvasRef.current.getBoundingClientRect();
-      const x = (e.clientX - rect.left - panOffset.x) / zoom;
-      const y = (e.clientY - rect.top - panOffset.y) / zoom;
+      const x = (e.clientX - rect.left - panOffset.x - dragOffset.x) / zoom;
+      const y = (e.clientY - rect.top - panOffset.y - dragOffset.y) / zoom;
       setNodes(prevNodes => prevNodes.map(n => 
         n.id === draggingNode.id ? { ...n, x, y } : n
       ));
@@ -173,7 +250,6 @@ export default function MessyMap() {
 
   const handleMouseUp = () => {
     if (draggingNode) {
-      // Get the latest position from state
       setNodes(currentNodes => {
         const draggedNode = currentNodes.find(n => n.id === draggingNode.id);
         if (draggedNode) {
@@ -188,8 +264,9 @@ export default function MessyMap() {
 
   const handleWheel = (e) => {
     e.preventDefault();
+    e.stopPropagation();
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    setZoom(Math.max(0.1, Math.min(3, zoom * delta)));
+    setZoom(prev => Math.max(0.1, Math.min(3, prev * delta)));
   };
 
   const getConnectedNodes = (nodeId) => {
@@ -210,104 +287,110 @@ export default function MessyMap() {
   });
 
   return (
-    <div className="relative w-screen h-screen bg-gray-50 overflow-hidden">
+    <div className="relative w-screen h-screen bg-gradient-to-br from-gray-50 to-gray-100 overflow-hidden">
       {/* Top Toolbar */}
-      <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between">
-        <div className="flex items-center gap-3 bg-white rounded-2xl shadow-lg px-4 py-3 border border-gray-200">
-          <button
-            onClick={() => navigate('/')}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-            title="Home"
-          >
-            <Home size={20} />
-          </button>
-          
-          <div className="w-px h-6 bg-gray-200" />
-          
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-              placeholder="Semantic search..."
-              className="px-3 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 w-64"
-            />
+      <div className="absolute top-0 left-0 right-0 z-20 bg-white border-b border-gray-200 shadow-sm">
+        <div className="flex items-center justify-between px-6 py-3">
+          {/* Left Section */}
+          <div className="flex items-center gap-4">
             <button
-              onClick={handleSearch}
-              className="p-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+              onClick={() => navigate('/')}
+              className="p-2 hover:bg-gray-100 rounded-md transition-colors"
+              title="Home"
             >
-              <Search size={18} />
+              <Home size={18} className="text-gray-700" />
+            </button>
+            
+            <div className="w-px h-5 bg-gray-300" />
+            
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                  placeholder="Search notes..."
+                  className="pl-9 pr-3 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent w-64 text-sm"
+                />
+              </div>
+            </div>
+
+            <button
+              onClick={runClustering}
+              className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-100 rounded-md transition-colors text-sm text-gray-700"
+              title="Auto-cluster notes"
+            >
+              <Brain size={16} />
+              Cluster
+            </button>
+
+            <button
+              onClick={() => setShowTimeline(!showTimeline)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors text-sm ${
+                showTimeline ? 'bg-blue-50 text-blue-700' : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              <Calendar size={16} />
+              Timeline
+            </button>
+
+            <button
+              onClick={() => setShowOrphans(!showOrphans)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors text-sm ${
+                showOrphans ? 'bg-pink-50 text-pink-700' : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              <Eye size={16} />
+              {orphans.length} Orphans
             </button>
           </div>
 
-          <div className="w-px h-6 bg-gray-200" />
-
-          <button
-            onClick={runClustering}
-            className="flex items-center gap-2 px-3 py-2 hover:bg-purple-50 rounded-lg transition-colors"
-            title="Auto-cluster notes"
-          >
-            <Brain size={18} className="text-purple-600" />
-            <span className="text-sm font-medium">Cluster</span>
-          </button>
-
-          <button
-            onClick={() => setShowTimeline(!showTimeline)}
-            className="flex items-center gap-2 px-3 py-2 hover:bg-blue-50 rounded-lg transition-colors"
-          >
-            <Calendar size={18} className="text-blue-600" />
-          </button>
-
-          <button
-            onClick={() => setShowOrphans(!showOrphans)}
-            className="flex items-center gap-2 px-3 py-2 hover:bg-pink-50 rounded-lg transition-colors"
-          >
-            <Eye size={18} className="text-pink-600" />
-            <span className="text-sm font-medium">{orphans.length} orphans</span>
-          </button>
-        </div>
-
-        <div className="flex items-center gap-3 bg-white rounded-2xl shadow-lg px-4 py-3 border border-gray-200">
-          <button
-            onClick={() => setMessyMode(!messyMode)}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-all ${
-              messyMode ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'
-            }`}
-          >
-            {messyMode ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
-            <span className="text-sm font-medium">Messy Mode</span>
-          </button>
-
-          <div className="w-px h-6 bg-gray-200" />
-
-          <div className="flex items-center gap-2">
+          {/* Right Section */}
+          <div className="flex items-center gap-3">
             <button
-              onClick={() => setZoom(Math.max(0.1, zoom - 0.1))}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              onClick={() => setMessyMode(!messyMode)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-all text-sm ${
+                messyMode ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-600'
+              }`}
             >
-              <Minimize2 size={18} />
+              {messyMode ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
+              Messy Mode
             </button>
-            <span className="text-sm font-medium min-w-[60px] text-center">
-              {Math.round(zoom * 100)}%
-            </span>
+
+            <div className="w-px h-5 bg-gray-300" />
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setZoom(prev => Math.max(0.1, prev - 0.1))}
+                className="p-1.5 hover:bg-gray-100 rounded-md transition-colors"
+                title="Zoom Out"
+              >
+                <Minimize2 size={16} className="text-gray-700" />
+              </button>
+              <span className="text-xs font-medium text-gray-600 min-w-[45px] text-center">
+                {Math.round(zoom * 100)}%
+              </span>
+              <button
+                onClick={() => setZoom(prev => Math.min(3, prev + 0.1))}
+                className="p-1.5 hover:bg-gray-100 rounded-md transition-colors"
+                title="Zoom In"
+              >
+                <Maximize2 size={16} className="text-gray-700" />
+              </button>
+            </div>
+
             <button
-              onClick={() => setZoom(Math.min(3, zoom + 0.1))}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              onClick={() => {
+                setZoom(1);
+                setPanOffset({ x: 0, y: 0 });
+              }}
+              className="px-3 py-1.5 hover:bg-gray-100 rounded-md text-xs font-medium text-gray-700"
             >
-              <Maximize2 size={18} />
+              Reset
             </button>
           </div>
-
-          <button
-            onClick={() => {
-              setZoom(1);
-              setPanOffset({ x: 0, y: 0 });
-            }}
-            className="px-3 py-2 hover:bg-gray-100 rounded-lg text-sm font-medium"
-          >
-            Reset View
-          </button>
         </div>
       </div>
 
@@ -407,6 +490,8 @@ export default function MessyMap() {
         onWheel={handleWheel}
         onMouseDown={(e) => {
           if (e.target === canvasRef.current) {
+            setMouseDownPos({ x: e.clientX, y: e.clientY });
+            setHasMoved(false);
             setIsPanning(true);
             setPanStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
           }
@@ -450,47 +535,49 @@ export default function MessyMap() {
         {filteredNodes.map(node => {
           const isConnected = focusedNode && getConnectedNodes(focusedNode).has(node.id);
           const opacity = focusedNode 
-            ? (node.id === focusedNode || isConnected ? 1 : 0.1)
+            ? (node.id === focusedNode || isConnected ? 1 : 0.15)
             : 1;
 
           return (
             <div
               key={node.id}
-              className="absolute cursor-move group"
+              className="absolute cursor-grab active:cursor-grabbing group"
               style={{
                 left: node.x * zoom + panOffset.x,
                 top: node.y * zoom + panOffset.y,
                 opacity,
                 transform: `scale(${zoom})`,
-                transformOrigin: '0 0'
+                transformOrigin: '0 0',
+                transition: draggingNode?.id === node.id ? 'none' : 'opacity 0.2s ease'
               }}
               onMouseDown={(e) => handleMouseDown(e, node)}
-              onDoubleClick={() => navigate(`/note/${node.id}`)}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                navigate(`/note/${node.id}`);
+              }}
             >
               <div
-                className={`relative bg-white rounded-xl shadow-md hover:shadow-xl transition-all duration-200 border-2 ${
-                  node.highlighted ? 'border-purple-500 ring-4 ring-purple-200' : 'border-gray-200'
-                } ${selectedNode?.id === node.id ? 'ring-4 ring-blue-300' : ''}`}
+                className={`relative bg-white rounded-lg shadow-sm hover:shadow-md transition-all duration-200 border ${
+                  node.highlighted ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'
+                } ${selectedNode?.id === node.id ? 'ring-2 ring-blue-300' : ''}`}
                 style={{
-                  width: '200px',
-                  minHeight: '100px',
-                  backgroundColor: node.color,
-                  borderLeftWidth: '6px',
-                  borderLeftColor: node.highlighted ? '#9333EA' : node.color
+                  width: '240px',
+                  minHeight: '120px',
+                  backgroundColor: node.color || '#ffffff'
                 }}
               >
                 <div className="p-4">
-                  <h3 className="font-bold text-gray-800 mb-2 text-sm line-clamp-2">
+                  <h3 className="font-semibold text-gray-900 mb-2 text-sm line-clamp-2 leading-snug">
                     {node.title}
                   </h3>
                   {node.rawText && (
-                    <p className="text-xs text-gray-600 line-clamp-3">
+                    <p className="text-xs text-gray-600 line-clamp-3 leading-relaxed">
                       {node.rawText}
                     </p>
                   )}
                   {node.type !== 'text' && (
-                    <div className="mt-2 text-xs text-gray-500 italic">
-                      {node.type} note
+                    <div className="mt-2 inline-flex items-center gap-1 px-2 py-1 bg-gray-100 rounded text-xs text-gray-600">
+                      {node.type}
                     </div>
                   )}
                 </div>
@@ -502,7 +589,7 @@ export default function MessyMap() {
                       e.stopPropagation();
                       handleFocus(node);
                     }}
-                    className="p-1.5 bg-blue-500 text-white rounded-full shadow-lg hover:bg-blue-600"
+                    className="p-1.5 bg-blue-600 text-white rounded-full shadow-md hover:bg-blue-700 transition-colors"
                     title="Focus Mode"
                   >
                     <Eye size={12} />
@@ -510,9 +597,11 @@ export default function MessyMap() {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      deleteNode(node.id);
+                      if (window.confirm('Delete this note?')) {
+                        deleteNode(node.id);
+                      }
                     }}
-                    className="p-1.5 bg-red-500 text-white rounded-full shadow-lg hover:bg-red-600"
+                    className="p-1.5 bg-red-600 text-white rounded-full shadow-md hover:bg-red-700 transition-colors"
                     title="Delete"
                   >
                     <Trash2 size={12} />
@@ -542,10 +631,12 @@ export default function MessyMap() {
 
       {/* Helper Text */}
       {nodes.length === 0 && (
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center">
-          <Plus size={64} className="mx-auto mb-4 text-gray-300" />
-          <p className="text-xl text-gray-600 mb-2">Click anywhere to create your first note</p>
-          <p className="text-sm text-gray-400">Double-click a note to edit it</p>
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
+            <Plus size={48} className="mx-auto mb-3 text-gray-400" />
+            <p className="text-lg text-gray-700 mb-1 font-medium">Click anywhere to create a note</p>
+            <p className="text-sm text-gray-500">Double-click to open • Drag to move • Scroll to zoom</p>
+          </div>
         </div>
       )}
     </div>
