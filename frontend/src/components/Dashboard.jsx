@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import { Folder, FileText, Brain, Plus, Network, Sparkles } from 'lucide-react';
+import { Folder, FileText, Brain, Plus, Network, Sparkles, Trash2, Edit3 } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
-export default function Dashboard({ user }) {
+export default function Dashboard({ user, onUpdate }) {
   const [data, setData] = useState({ folders: [], recentNotes: [], stats: {} });
   const [newFolderName, setNewFolderName] = useState('');
   const [showNewFolder, setShowNewFolder] = useState(false);
@@ -28,9 +28,38 @@ export default function Dashboard({ user }) {
       setNewFolderName('');
       setShowNewFolder(false);
       await loadData();
+      if (onUpdate) onUpdate();
     } catch (error) {
       console.error('Failed to create folder:', error);
       alert('Failed to create folder. Please try again.');
+    }
+  };
+
+  const deleteFolder = async (folderId, e) => {
+    e.stopPropagation();
+    if (!confirm('Delete this folder? Notes will be moved to root.')) return;
+    
+    try {
+      await axios.delete(`${API}/api/folders/${folderId}`, { withCredentials: true });
+      await loadData();
+      if (onUpdate) onUpdate();
+    } catch (error) {
+      console.error('Failed to delete folder:', error);
+      alert('Failed to delete folder. Please try again.');
+    }
+  };
+
+  const deleteNote = async (noteId, e) => {
+    e.stopPropagation();
+    if (!confirm('Delete this note?')) return;
+    
+    try {
+      await axios.delete(`${API}/api/notes/${noteId}`, { withCredentials: true });
+      await loadData();
+      if (onUpdate) onUpdate();
+    } catch (error) {
+      console.error('Failed to delete note:', error);
+      alert('Failed to delete note. Please try again.');
     }
   };
 
@@ -140,8 +169,18 @@ export default function Dashboard({ user }) {
               <div
                 key={f.id}
                 onClick={() => navigate(`/mindmap/${f.id}`)}
-                className="group bg-[#252526] rounded-lg p-5 shadow-sm border border-[#3d3d3d] hover:border-blue-500 cursor-pointer transition-all duration-200"
+                className="group bg-[#252526] rounded-lg p-5 shadow-sm border border-[#3d3d3d] hover:border-blue-500 cursor-pointer transition-all duration-200 relative"
               >
+                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                  <button
+                    onClick={(e) => deleteFolder(f.id, e)}
+                    className="p-1.5 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
+                    title="Delete folder"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+                
                 <div className="flex items-center gap-3 mb-3">
                   <div className="p-2 rounded-lg bg-[#3d3d3d]">
                     <Folder className="text-gray-400" size={20} />
@@ -184,8 +223,18 @@ export default function Dashboard({ user }) {
                 <div
                   key={n.id}
                   onClick={() => navigate(`/note/${n.id}`)}
-                  className="bg-[#252526] rounded-lg p-4 shadow-sm border border-[#3d3d3d] hover:border-blue-500 cursor-pointer transition-all duration-200 group"
+                  className="bg-[#252526] rounded-lg p-4 shadow-sm border border-[#3d3d3d] hover:border-blue-500 cursor-pointer transition-all duration-200 group relative"
                 >
+                  <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={(e) => deleteNote(n.id, e)}
+                      className="p-1.5 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
+                      title="Delete note"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                  
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                       <div className="p-2 rounded-md bg-[#3d3d3d] flex-shrink-0">

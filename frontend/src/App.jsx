@@ -4,7 +4,7 @@ import axios from 'axios';
 import { 
   FileText, Home, Network, Search, Plus, Folder, 
   LogOut, Star, Clock, Archive, ChevronRight, ChevronDown,
-  LayoutGrid, Zap, RefreshCw, Loader
+  LayoutGrid, Zap, RefreshCw, Loader, Trash2, Edit3, X, Check, FolderPlus
 } from 'lucide-react';
 
 // Import components
@@ -34,6 +34,10 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [editingFolder, setEditingFolder] = useState(null);
+  const [editingFolderName, setEditingFolderName] = useState('');
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
   const navigate = useNavigate();
 
   const loadNotes = useCallback(async (showLoader = false) => {
@@ -79,14 +83,89 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
   useEffect(() => {
     if (refreshTrigger > 0) {
       loadNotes(false);
+      loadFolders();
     }
-  }, [refreshTrigger, loadNotes]);
+  }, [refreshTrigger, loadNotes, loadFolders]);
 
   // Auto-refresh every 30 seconds
   useEffect(() => {
-    const interval = setInterval(() => loadNotes(false), 30000);
+    const interval = setInterval(() => {
+      loadNotes(false);
+      loadFolders();
+    }, 30000);
     return () => clearInterval(interval);
-  }, [loadNotes]);
+  }, [loadNotes, loadFolders]);
+
+  const deleteNote = async (noteId, e) => {
+    e.stopPropagation();
+    if (!confirm('Delete this note?')) return;
+    
+    try {
+      await axios.delete(`${API}/api/notes/${noteId}`, { withCredentials: true });
+      setNotes(notes.filter(n => n.id !== noteId));
+      if (currentNoteId === noteId) {
+        navigate('/note/new');
+      }
+    } catch (error) {
+      console.error('Failed to delete note:', error);
+      alert('Failed to delete note. Please try again.');
+    }
+  };
+
+  const deleteFolder = async (folderId, e) => {
+    e.stopPropagation();
+    if (!confirm('Delete this folder? Notes will be moved to root.')) return;
+    
+    try {
+      await axios.delete(`${API}/api/folders/${folderId}`, { withCredentials: true });
+      setFolders(folders.filter(f => f.id !== folderId));
+      loadNotes(false);
+    } catch (error) {
+      console.error('Failed to delete folder:', error);
+      alert('Failed to delete folder. Please try again.');
+    }
+  };
+
+  const createFolder = async () => {
+    if (!newFolderName.trim()) return;
+    
+    try {
+      const res = await axios.post(`${API}/api/folders`, { 
+        name: newFolderName 
+      }, { withCredentials: true });
+      
+      setFolders([...folders, res.data]);
+      setNewFolderName('');
+      setIsCreatingFolder(false);
+    } catch (error) {
+      console.error('Failed to create folder:', error);
+      alert('Failed to create folder. Please try again.');
+    }
+  };
+
+  const startEditFolder = (folder, e) => {
+    e.stopPropagation();
+    setEditingFolder(folder.id);
+    setEditingFolderName(folder.name);
+  };
+
+  const saveEditFolder = async (folderId) => {
+    if (!editingFolderName.trim()) return;
+    
+    try {
+      await axios.put(`${API}/api/folders/${folderId}`, { 
+        name: editingFolderName 
+      }, { withCredentials: true });
+      
+      setFolders(folders.map(f => 
+        f.id === folderId ? { ...f, name: editingFolderName } : f
+      ));
+      setEditingFolder(null);
+    } catch (error) {
+      console.error('Failed to update folder:', error);
+      alert('Failed to update folder. Please try again.');
+    }
+  };
 
   const filteredNotes = notes.filter(n => 
     n.title.toLowerCase().includes(searchQuery.toLowerCase())
@@ -125,7 +204,10 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
           <h1 className="text-sm font-semibold text-gray-100">Messy Notes</h1>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => loadNotes(false)}
+              onClick={() => {
+                loadNotes(false);
+                loadFolders();
+              }}
               disabled={isRefreshing}
               className="p-1.5 hover:bg-[#3d3d3d] rounded transition-colors disabled:opacity-50"
               title="Refresh"
@@ -226,27 +308,119 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
 
         {/* Folders */}
         <div className="px-2">
-          <div className="text-[10px] uppercase tracking-wider text-gray-500 px-2 py-1 mb-1">
-            Folders
-          </div>
-          {folders.map(folder => (
+          <div className="flex items-center justify-between px-2 py-1 mb-1">
+            <div className="text-[10px] uppercase tracking-wider text-gray-500">
+              Folders
+            </div>
             <button
-              key={folder.id}
-              onClick={() => {
-                toggleFolder(folder.id);
-                navigate(`/mindmap/${folder.id}`);
-              }}
-              className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-[#2a2d2e] rounded text-xs text-left transition-colors"
+              onClick={() => setIsCreatingFolder(!isCreatingFolder)}
+              className="p-1 hover:bg-[#3d3d3d] rounded transition-colors"
+              title="New Folder"
             >
-              {expandedFolders.has(folder.id) ? (
-                <ChevronDown size={12} />
-              ) : (
-                <ChevronRight size={12} />
-              )}
-              <Folder size={14} className="text-blue-400" />
-              <span className="flex-1 truncate">{folder.name}</span>
-              <span className="text-[10px] text-gray-500">{folder._count?.notes || 0}</span>
+              <FolderPlus size={12} className="text-blue-400" />
             </button>
+          </div>
+
+          {/* New Folder Input */}
+          {isCreatingFolder && (
+            <div className="mb-2 bg-[#2a2d2e] rounded p-2">
+              <input
+                type="text"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter') createFolder();
+                  if (e.key === 'Escape') setIsCreatingFolder(false);
+                }}
+                placeholder="Folder name..."
+                className="w-full px-2 py-1 bg-[#1e1e1e] border border-[#3d3d3d] rounded text-xs focus:outline-none focus:border-blue-500 text-gray-200 mb-2"
+                autoFocus
+              />
+              <div className="flex gap-1">
+                <button
+                  onClick={createFolder}
+                  className="flex-1 px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700"
+                >
+                  Create
+                </button>
+                <button
+                  onClick={() => {
+                    setIsCreatingFolder(false);
+                    setNewFolderName('');
+                  }}
+                  className="px-2 py-1 bg-[#3d3d3d] text-gray-300 rounded text-xs hover:bg-[#4d4d4d]"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {folders.map(folder => (
+            <div key={folder.id} className="group">
+              {editingFolder === folder.id ? (
+                <div className="mb-1 bg-[#2a2d2e] rounded p-2">
+                  <input
+                    type="text"
+                    value={editingFolderName}
+                    onChange={(e) => setEditingFolderName(e.target.value)}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') saveEditFolder(folder.id);
+                      if (e.key === 'Escape') setEditingFolder(null);
+                    }}
+                    className="w-full px-2 py-1 bg-[#1e1e1e] border border-[#3d3d3d] rounded text-xs focus:outline-none focus:border-blue-500 text-gray-200 mb-2"
+                    autoFocus
+                  />
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => saveEditFolder(folder.id)}
+                      className="flex-1 px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700"
+                    >
+                      <Check size={12} className="inline" />
+                    </button>
+                    <button
+                      onClick={() => setEditingFolder(null)}
+                      className="px-2 py-1 bg-[#3d3d3d] text-gray-300 rounded text-xs hover:bg-[#4d4d4d]"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => {
+                    toggleFolder(folder.id);
+                    navigate(`/mindmap/${folder.id}`);
+                  }}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-[#2a2d2e] rounded text-xs text-left transition-colors mb-1"
+                >
+                  {expandedFolders.has(folder.id) ? (
+                    <ChevronDown size={12} />
+                  ) : (
+                    <ChevronRight size={12} />
+                  )}
+                  <Folder size={14} className="text-blue-400" />
+                  <span className="flex-1 truncate">{folder.name}</span>
+                  <span className="text-[10px] text-gray-500">{folder._count?.notes || 0}</span>
+                  <div className="opacity-0 group-hover:opacity-100 flex gap-1">
+                    <button
+                      onClick={(e) => startEditFolder(folder, e)}
+                      className="p-0.5 hover:bg-[#4d4d4d] rounded"
+                      title="Rename"
+                    >
+                      <Edit3 size={10} className="text-blue-400" />
+                    </button>
+                    <button
+                      onClick={(e) => deleteFolder(folder.id, e)}
+                      className="p-0.5 hover:bg-[#4d4d4d] rounded"
+                      title="Delete"
+                    >
+                      <Trash2 size={10} className="text-red-400" />
+                    </button>
+                  </div>
+                </button>
+              )}
+            </div>
           ))}
         </div>
 
@@ -281,6 +455,13 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
                   </div>
                   {note.sticky && <Star size={10} className="text-yellow-400" fill="currentColor" />}
                   {note.ephemeral && <Zap size={10} className="text-gray-500" />}
+                  <button
+                    onClick={(e) => deleteNote(note.id, e)}
+                    className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-600 rounded transition-opacity"
+                    title="Delete"
+                  >
+                    <Trash2 size={10} className="text-red-400" />
+                  </button>
                 </button>
               ))}
               
@@ -379,6 +560,10 @@ function MainLayout() {
     setRefreshTrigger(prev => prev + 1);
   };
 
+  const handleNoteUpdate = () => {
+    setRefreshTrigger(prev => prev + 1);
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-[#1e1e1e]">
       <Sidebar
@@ -407,13 +592,13 @@ function MainLayout() {
             element={
               <EditorPage 
                 onUserLoad={setUser} 
-                onNoteUpdate={() => setRefreshTrigger(prev => prev + 1)}
+                onNoteUpdate={handleNoteUpdate}
               />
             } 
           />
-          <Route path="/dashboard" element={<Dashboard user={user} />} />
-          <Route path="/mindmap" element={<MessyMap />} />
-          <Route path="/mindmap/:folderId" element={<MessyMap />} />
+          <Route path="/dashboard" element={<Dashboard user={user} onUpdate={handleNoteUpdate} />} />
+          <Route path="/mindmap" element={<MessyMap onUpdate={handleNoteUpdate} />} />
+          <Route path="/mindmap/:folderId" element={<MessyMap onUpdate={handleNoteUpdate} />} />
           <Route path="*" element={<Navigate to="/note/new" replace />} />
         </Routes>
       </div>

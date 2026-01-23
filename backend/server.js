@@ -73,16 +73,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Database connection check middleware (note: Prisma handles pooling, but this ensures connectivity)
-app.use((req, res, next) => {
-  prisma.$queryRaw`SELECT 1`
-    .then(() => next())
-    .catch(err => {
-      console.error('DB connection error:', err);
-      res.status(503).json({ error: 'Database unavailable' });
-    });
-});
-
 // Basic middleware
 app.use(cors({ 
   origin: process.env.FRONTEND_URL, 
@@ -127,6 +117,21 @@ const rateLimiter = (req, res, next) => {
 app.use('/api/', rateLimiter);
 app.use('/api/', deduplicateRequests);
 
+// Redirect non-API routes to API routes (safety net)
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/') && 
+      !req.path.startsWith('/auth/') && 
+      !req.path.startsWith('/health') &&
+      req.path !== '/') {
+    console.warn(`Redirecting ${req.method} ${req.path} to /api${req.path}`);
+    return res.status(404).json({ 
+      error: 'Endpoint not found. Did you mean /api' + req.path + '?',
+      correctPath: '/api' + req.path
+    });
+  }
+  next();
+});
+
 // Health check endpoint
 app.get('/health', async (req, res) => {
   try {
@@ -145,6 +150,26 @@ app.get('/health', async (req, res) => {
       error: e.message 
     });
   }
+});
+
+// Periodic DB health check (instead of on every request)
+let dbHealthy = true;
+setInterval(async () => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    dbHealthy = true;
+  } catch (e) {
+    console.error('DB health check failed:', e);
+    dbHealthy = false;
+  }
+}, 30000); // Check every 30 seconds
+
+// Simplified DB check middleware - only fails fast if DB is known to be down
+app.use((req, res, next) => {
+  if (!dbHealthy && !req.path.includes('/health')) {
+    return res.status(503).json({ error: 'Database unavailable' });
+  }
+  next();
 });
 
 let extractor;
@@ -198,7 +223,14 @@ app.get('/auth/google/callback', passport.authenticate('google', { session: fals
 
 const auth = async (req, res, next) => {
   const token = req.cookies.token;
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  
+  if (!token) {
+    console.warn(`No token found for ${req.method} ${req.path}`);
+    return res.status(401).json({ 
+      error: 'Unauthorized - no token',
+      action: 'REAUTH_REQUIRED' 
+    });
+  }
   
   try {
     const decoded = jsonwebtoken.verify(token, process.env.JWT_SECRET);
@@ -209,6 +241,7 @@ const auth = async (req, res, next) => {
     });
     
     if (!user) {
+      console.warn(`User not found for token: ${decoded.userId}`);
       res.clearCookie('token');
       return res.status(401).json({ 
         error: 'User not found. Please sign in again.',
@@ -220,6 +253,8 @@ const auth = async (req, res, next) => {
     req.user = user;
     next();
   } catch (e) {
+    console.error(`Auth error for ${req.method} ${req.path}:`, e.message);
+    
     if (e.name === 'TokenExpiredError') {
       res.clearCookie('token');
       return res.status(401).json({ 
@@ -227,8 +262,20 @@ const auth = async (req, res, next) => {
         action: 'REAUTH_REQUIRED'
       });
     }
+    
+    if (e.name === 'JsonWebTokenError') {
+      res.clearCookie('token');
+      return res.status(401).json({ 
+        error: 'Invalid token. Please sign in again.',
+        action: 'REAUTH_REQUIRED'
+      });
+    }
+    
     res.clearCookie('token');
-    res.status(401).json({ error: 'Invalid token' });
+    res.status(401).json({ 
+      error: 'Authentication failed: ' + e.message,
+      action: 'REAUTH_REQUIRED'
+    });
   }
 };
 
@@ -538,7 +585,8 @@ app.put('/api/folders/:id', auth, async (req, res) => {
     
     const folder = await prisma.folder.update({
       where: { id: req.params.id },
-      data: { name: req.body.name }
+      data: { name: req.body.name },
+      include: { _count: { select: { notes: true } } }
     });
     res.json(folder);
   } catch (error) {
@@ -665,7 +713,10 @@ app.post('/api/cluster', auth, async (req, res) => {
     });
     
     const numClusters = Math.min(5, Math.floor(embeddings.length / 2));
-    const result = kmeans(embeddings, numClusters, { initialization: 'kmeans++' });
+    
+    // FIXED: Changed initialization from 'kmeans++' to 'mostDistant'
+    // ml-kmeans supports: 'random', 'mostDistant', or 'kmeans' (not 'kmeans++')
+    const result = kmeans(embeddings, numClusters, { initialization: 'mostDistant' });
     
     const clusters = {};
     result.clusters.forEach((clusterIdx, i) => {
@@ -713,7 +764,7 @@ app.post('/api/cluster', auth, async (req, res) => {
     res.json({ clusters: clusterData, preview });
   } catch (error) {
     console.error('Clustering error:', error);
-    res.status(500).json({ error: 'Clustering failed' });
+    res.status(500).json({ error: 'Clustering failed: ' + error.message });
   }
 });
 
