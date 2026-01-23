@@ -155,7 +155,7 @@ if (!interceptorConfigured) {
   );
 }
 
-function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refreshTrigger, sidebarNotes, setSidebarNotes }) {
+function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refreshTrigger, sidebarNotes, setSidebarNotes, onNoteUpdate }) {
   const [folders, setFolders] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSection, setActiveSection] = useState('recent');
@@ -256,7 +256,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
     if (!confirm('Delete this note?')) return;
     
     try {
-      // Optimistic update
+      // Optimistic update - remove immediately
       setSidebarNotes(prev => prev.filter(n => n.id !== noteId));
       
       await axios.delete(`${API}/api/notes/${noteId}`, { withCredentials: true });
@@ -264,6 +264,9 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
       if (currentNoteId === noteId) {
         navigate('/note/new');
       }
+      
+      // Trigger refresh for other components
+      onNoteUpdate?.();
     } catch (error) {
       console.error('Failed to delete note:', error);
       alert('Failed to delete note. Please try again.');
@@ -750,7 +753,19 @@ function MainLayout({ user }) {
     setRefreshTrigger(prev => prev + 1);
   };
 
-  // NEW: Handle live note updates from editor
+  // Handle clearing all notes (for delete all operation)
+  const handleClearAllNotes = useCallback(() => {
+    setSidebarNotes([]);
+    setRefreshTrigger(prev => prev + 1);
+  }, []);
+
+  // Handle deleting a single note
+  const handleDeleteNote = useCallback((noteId) => {
+    setSidebarNotes(prev => prev.filter(n => n.id !== noteId));
+    setRefreshTrigger(prev => prev + 1);
+  }, []);
+
+  // Handle live note updates from editor
   const handleLiveNoteUpdate = useCallback((noteId, updates) => {
     setSidebarNotes(prev => {
       const noteIndex = prev.findIndex(n => n.id === noteId);
@@ -784,6 +799,7 @@ function MainLayout({ user }) {
         refreshTrigger={refreshTrigger}
         sidebarNotes={sidebarNotes}
         setSidebarNotes={setSidebarNotes}
+        onNoteUpdate={handleNoteUpdate}
       />
       
       <div className="flex-1 overflow-hidden relative">
@@ -807,7 +823,17 @@ function MainLayout({ user }) {
               />
             } 
           />
-          <Route path="/dashboard" element={<Dashboard user={user} onUpdate={handleNoteUpdate} />} />
+          <Route 
+            path="/dashboard" 
+            element={
+              <Dashboard 
+                user={user} 
+                onUpdate={handleNoteUpdate}
+                onClearAll={handleClearAllNotes}
+                onDeleteNote={handleDeleteNote}
+              />
+            } 
+          />
           <Route path="/mindmap" element={<MessyMap onUpdate={handleNoteUpdate} />} />
           <Route path="/mindmap/:folderId" element={<MessyMap onUpdate={handleNoteUpdate} />} />
           <Route path="*" element={<Navigate to="/note/new" replace />} />

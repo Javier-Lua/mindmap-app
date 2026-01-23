@@ -5,7 +5,7 @@ import { Folder, FileText, Brain, Plus, Network, Sparkles, Trash2, Edit3, AlertT
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
-export default function Dashboard({ user, onUpdate }) {
+export default function Dashboard({ user, onUpdate, onClearAll, onDeleteNote }) {
   const [data, setData] = useState({ folders: [], recentNotes: [], stats: {} });
   const [newFolderName, setNewFolderName] = useState('');
   const [showNewFolder, setShowNewFolder] = useState(false);
@@ -64,7 +64,11 @@ export default function Dashboard({ user, onUpdate }) {
         stats: { ...prev.stats, totalNotes: (prev.stats.totalNotes || 0) - 1 }
       }));
       
+      // Immediately remove from sidebar
+      if (onDeleteNote) onDeleteNote(noteId);
+      
       await axios.delete(`${API}/api/notes/${noteId}`, { withCredentials: true });
+      
       if (onUpdate) onUpdate();
     } catch (error) {
       console.error('Failed to delete note:', error);
@@ -98,6 +102,8 @@ export default function Dashboard({ user, onUpdate }) {
       setShowDeleteAllModal(false);
       setDeleteAllConfirm('');
       
+      // Clear sidebar notes immediately
+      if (onClearAll) onClearAll();
       if (onUpdate) onUpdate();
       
       // Show success message

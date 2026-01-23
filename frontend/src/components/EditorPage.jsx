@@ -252,9 +252,15 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
 
       console.error('Failed to load note:', error);
       
-      // Only create new note if we're still on 'new' or the same ID
-      if (id === 'new' || currentNoteIdRef.current === id) {
-        await createNewNote(loadPromise);
+      // If note doesn't exist (404), navigate to new note instead of creating
+      if (error.response?.status === 404) {
+        setSaveError('Note not found');
+        setTimeout(() => {
+          navigate('/note/new', { replace: true });
+        }, 1000);
+      } else {
+        // For other errors, show error message
+        setSaveError('Failed to load note. Please try again.');
       }
     } finally {
       if (!loadPromise.cancelled && currentNoteIdRef.current === id) {
@@ -436,6 +442,20 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
           <p className="text-theme-secondary">Loading note...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show error state if note not found
+  if (saveError === 'Note not found') {
+    return (
+      <div className="min-h-screen flex items-center justify-center theme-bg-primary">
+        <div className="text-center">
+          <X className="text-red-500 mx-auto mb-4" size={48} />
+          <p className="text-theme-primary text-lg mb-2">Note not found</p>
+          <p className="text-theme-secondary mb-4">This note may have been deleted</p>
+          <p className="text-sm text-theme-tertiary">Redirecting to new note...</p>
         </div>
       </div>
     );
