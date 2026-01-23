@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import { 
@@ -17,26 +17,22 @@ const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 // Global flags to control application state
 window.isLoggingOut = false;
-let hasRedirected = false;
 
-// Add global axios interceptor for auth errors
-axios.interceptors.response.use(
-  response => response,
-  error => {
-    // Ignore errors if logging out
-    if (window.isLoggingOut) {
+// Configure axios interceptor ONCE - only handle errors, don't redirect
+let interceptorConfigured = false;
+if (!interceptorConfigured) {
+  axios.interceptors.response.use(
+    response => response,
+    error => {
+      // Only log non-auth errors during normal operation
+      if (!window.isLoggingOut && error.response?.status !== 401) {
+        console.error('API Error:', error.response?.status, error.message);
+      }
       return Promise.reject(error);
     }
-    
-    if (error.response?.data?.action === 'REAUTH_REQUIRED' && !hasRedirected) {
-      hasRedirected = true;
-      setTimeout(() => {
-        window.location.href = '/';
-      }, 100);
-    }
-    return Promise.reject(error);
-  }
-);
+  );
+  interceptorConfigured = true;
+}
 
 function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refreshTrigger }) {
   const [notes, setNotes] = useState([]);
@@ -51,9 +47,19 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const navigate = useNavigate();
+  const isMountedRef = useRef(true);
+
+  // Track if component is mounted
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const loadNotes = useCallback(async (showLoader = false) => {
-    if (window.isLoggingOut) return;
+    // Don't make requests if logging out or unmounted
+    if (window.isLoggingOut || !isMountedRef.current) return;
     
     if (showLoader) {
       setIsLoading(true);
@@ -67,24 +73,25 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
         timeout: 10000
       });
       
-      if (!window.isLoggingOut) {
+      if (!window.isLoggingOut && isMountedRef.current) {
         setNotes(res.data);
       }
     } catch (error) {
-      // Silently fail if it's an auth error
-      if (error.response?.status !== 401) {
-        console.error('Failed to load notes:', error);
+      // Only handle if still mounted and not logging out
+      if (!window.isLoggingOut && isMountedRef.current && error.response?.status === 401) {
+        // Auth failed - trigger logout
+        onLogout();
       }
     } finally {
-      if (!window.isLoggingOut) {
+      if (isMountedRef.current) {
         setIsLoading(false);
         setIsRefreshing(false);
       }
     }
-  }, []);
+  }, [onLogout]);
 
   const loadFolders = useCallback(async () => {
-    if (window.isLoggingOut) return;
+    if (window.isLoggingOut || !isMountedRef.current) return;
     
     try {
       const res = await axios.get(`${API}/api/home`, { 
@@ -92,43 +99,41 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
         timeout: 10000
       });
       
-      if (!window.isLoggingOut) {
+      if (!window.isLoggingOut && isMountedRef.current) {
         setFolders(res.data.folders);
       }
     } catch (error) {
-      if (error.response?.status !== 401) {
-        console.error('Failed to load folders:', error);
+      if (!window.isLoggingOut && isMountedRef.current && error.response?.status === 401) {
+        onLogout();
       }
     }
-  }, []);
+  }, [onLogout]);
 
-  // Initial load
+  // Initial load - only once
   useEffect(() => {
     loadNotes(true);
     loadFolders();
-  }, [loadNotes, loadFolders]);
+  }, []); // Empty deps - only run once on mount
 
   // Refresh when trigger changes (note created/updated)
   useEffect(() => {
-    if (refreshTrigger > 0) {
+    if (refreshTrigger > 0 && !window.isLoggingOut) {
       loadNotes(false);
       loadFolders();
     }
-  }, [refreshTrigger, loadNotes, loadFolders]);
+  }, [refreshTrigger]); // Only depend on refreshTrigger
 
-  // Auto-refresh every 30 seconds
+  // Auto-refresh every 30 seconds - use ref to avoid recreating interval
   useEffect(() => {
     const interval = setInterval(() => {
-      if (!window.isLoggingOut) {
+      if (!window.isLoggingOut && isMountedRef.current) {
         loadNotes(false);
         loadFolders();
       }
     }, 30000);
     
-    return () => {
-      clearInterval(interval);
-    };
-  }, [loadNotes, loadFolders]);
+    return () => clearInterval(interval);
+  }, []); // Empty deps - interval uses refs
 
   const deleteNote = async (noteId, e) => {
     e.stopPropagation();
@@ -580,20 +585,22 @@ function MainLayout({ user }) {
   };
 
   const handleLogout = async () => {
-    // Set flag to prevent new requests
+    // Set flag immediately to stop all requests
     window.isLoggingOut = true;
     
     try {
-      // Try to call logout endpoint
+      // Try to call logout endpoint (with short timeout)
       await axios.post(`${API}/api/logout`, {}, { 
         withCredentials: true,
         timeout: 2000
+      }).catch(() => {
+        // Ignore errors - we're logging out anyway
       });
-    } catch (error) {
-      console.log('Logout API call failed, but continuing...', error);
+    } catch (e) {
+      // Ignore
     }
     
-    // Clear all local data
+    // Clear storage
     try {
       localStorage.clear();
       sessionStorage.clear();
@@ -601,8 +608,8 @@ function MainLayout({ user }) {
       console.error('Failed to clear storage:', e);
     }
     
-    // Force reload to login page
-    window.location.replace('/');
+    // Force full page reload to login
+    window.location.href = '/';
   };
 
   const handleQuickCaptureClose = () => {
@@ -663,12 +670,18 @@ export default function App() {
   const [authenticated, setAuthenticated] = useState(null);
   const [user, setUser] = useState(null);
   const [authError, setAuthError] = useState(null);
+  const hasCheckedAuth = useRef(false);
 
   useEffect(() => {
-    checkAuth();
+    // Only check auth once
+    if (!hasCheckedAuth.current) {
+      hasCheckedAuth.current = true;
+      checkAuth();
+    }
   }, []);
 
   const checkAuth = async () => {
+    // Don't check if logging out
     if (window.isLoggingOut) {
       setAuthenticated(false);
       return;
@@ -681,15 +694,18 @@ export default function App() {
       });
       setAuthenticated(true);
       setUser(res.data);
-      hasRedirected = false;
+      setAuthError(null);
+      window.isLoggingOut = false; // Reset flag on successful auth
     } catch (error) {
+      setAuthenticated(false);
+      setUser(null);
+      
+      // Only show error message for non-401 errors
       if (error.response?.status !== 401) {
         console.error('Auth check failed:', error);
-      }
-      setAuthenticated(false);
-      
-      if (error.response?.data?.action === 'REAUTH_REQUIRED') {
-        setAuthError(error.response.data.error || 'Please sign in again');
+        setAuthError('Authentication check failed. Please try again.');
+      } else {
+        setAuthError(null);
       }
     }
   };

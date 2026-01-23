@@ -230,10 +230,7 @@ const auth = async (req, res, next) => {
   const token = req.cookies.token;
   
   if (!token) {
-    // Don't log warnings for /api/me endpoint - it's expected during logout
-    if (req.path !== '/api/me') {
-      console.warn(`No token found for ${req.method} ${req.path}`);
-    }
+    // Silent fail for /api/me - expected during logout
     return res.status(401).json({ 
       error: 'Unauthorized - no token',
       action: 'REAUTH_REQUIRED' 
@@ -249,7 +246,6 @@ const auth = async (req, res, next) => {
     });
     
     if (!user) {
-      console.warn(`User not found for token: ${decoded.userId}`);
       res.clearCookie('token');
       return res.status(401).json({ 
         error: 'User not found. Please sign in again.',
@@ -261,30 +257,9 @@ const auth = async (req, res, next) => {
     req.user = user;
     next();
   } catch (e) {
-    // Don't log token errors for /api/me during normal logout flow
-    if (req.path !== '/api/me') {
-      console.error(`Auth error for ${req.method} ${req.path}:`, e.message);
-    }
-    
-    if (e.name === 'TokenExpiredError') {
-      res.clearCookie('token');
-      return res.status(401).json({ 
-        error: 'Session expired. Please sign in again.',
-        action: 'REAUTH_REQUIRED'
-      });
-    }
-    
-    if (e.name === 'JsonWebTokenError') {
-      res.clearCookie('token');
-      return res.status(401).json({ 
-        error: 'Invalid token. Please sign in again.',
-        action: 'REAUTH_REQUIRED'
-      });
-    }
-    
     res.clearCookie('token');
     res.status(401).json({ 
-      error: 'Authentication failed: ' + e.message,
+      error: 'Authentication failed',
       action: 'REAUTH_REQUIRED'
     });
   }
