@@ -1105,7 +1105,7 @@ app.delete('/api/notes/all', auth, async (req, res) => {
       });
     }
     
-    // Get all note IDs first
+    // FIXED: Get all note IDs first, then delete properly
     const notes = await prisma.note.findMany({
       where: { userId: req.userId },
       select: { id: true }
@@ -1117,23 +1117,39 @@ app.delete('/api/notes/all', auth, async (req, res) => {
       return res.json({ deleted: 0 });
     }
     
-    // Delete everything
+    console.log(`Deleting ${noteIds.length} notes for user ${req.userId}`);
+    
+    // Delete everything in correct order using note IDs
     await prisma.$transaction([
+      // Delete links that reference these notes
       prisma.link.deleteMany({ 
-        where: { source: { userId: req.userId } }
+        where: { 
+          OR: [
+            { sourceId: { in: noteIds } },
+            { targetId: { in: noteIds } }
+          ]
+        }
       }),
+      // Delete annotations for these notes
       prisma.annotation.deleteMany({ 
-        where: { note: { userId: req.userId } }
+        where: { noteId: { in: noteIds } }
       }),
+      // Delete cluster associations
+      prisma.$executeRaw`DELETE FROM "_NoteClusters" WHERE "B" IN (${prisma.join(noteIds)})`,
+      // Finally delete the notes
       prisma.note.deleteMany({ 
         where: { userId: req.userId }
       })
     ]);
     
+    console.log(`Successfully deleted ${noteIds.length} notes`);
     res.json({ deleted: noteIds.length });
   } catch (error) {
     console.error('Delete all error:', error);
-    res.status(500).json({ error: 'Failed to delete all notes' });
+    res.status(500).json({ 
+      error: 'Failed to delete all notes: ' + error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 

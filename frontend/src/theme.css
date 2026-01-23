@@ -1,18 +1,19 @@
 /* ===== THEME SYSTEM ===== */
 
 :root {
-  /* Light Mode Colors */
-  --bg-primary: #ffffff;
-  --bg-secondary: #f9fafb;
-  --bg-tertiary: #f3f4f6;
-  --bg-hover: #e5e7eb;
+  /* Light Mode Colors - Softer, easier on eyes */
+  --bg-primary: #fafafa;
+  --bg-secondary: #f5f5f5;
+  --bg-tertiary: #ececec;
+  --bg-hover: #e0e0e0;
+  --bg-card: #ffffff;
   
-  --text-primary: #111827;
-  --text-secondary: #6b7280;
-  --text-tertiary: #9ca3af;
+  --text-primary: #2c2c2c;
+  --text-secondary: #5a5a5a;
+  --text-tertiary: #8a8a8a;
   
-  --border-primary: #e5e7eb;
-  --border-secondary: #d1d5db;
+  --border-primary: #d4d4d4;
+  --border-secondary: #bdbdbd;
   --border-focus: #6366f1;
   
   --accent-blue: #3b82f6;
@@ -40,7 +41,7 @@
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
   
   --editor-bg: #ffffff;
-  --editor-text: #111827;
+  --editor-text: #2c2c2c;
   --code-bg: #f3f4f6;
   --code-text: #6366f1;
 }
@@ -51,6 +52,7 @@
   --bg-secondary: #252526;
   --bg-tertiary: #2d2d30;
   --bg-hover: #37373d;
+  --bg-card: #2a2a2a;
   
   --text-primary: #e5e5e5;
   --text-secondary: #9ca3af;
@@ -104,6 +106,10 @@
   background-color: var(--bg-tertiary);
 }
 
+.theme-bg-card {
+  background-color: var(--bg-card);
+}
+
 .theme-bg-hover:hover {
   background-color: var(--bg-hover);
 }
@@ -140,59 +146,43 @@
   box-shadow: var(--shadow-lg);
 }
 
-/* ===== LIGHT MODE SPECIFIC FIXES ===== */
+/* ===== PROSE THEMING ===== */
 
-/* Ensure proper contrast in light mode */
-:root .prose,
-:root .ProseMirror {
+.prose,
+.ProseMirror {
   color: var(--editor-text);
 }
 
-:root .prose blockquote,
-:root .ProseMirror blockquote {
-  color: #4b5563;
-  border-left-color: #6366f1;
-  background: rgba(99, 102, 241, 0.05);
+.prose blockquote,
+.ProseMirror blockquote {
+  color: var(--text-secondary);
+  border-left-color: var(--accent-blue);
+  background: var(--accent-blue-bg);
 }
 
-:root .prose code,
-:root .ProseMirror code {
+.prose code,
+.ProseMirror code {
   background: var(--code-bg);
   color: var(--code-text);
 }
 
-:root .prose pre,
-:root .ProseMirror pre {
-  background: #f3f4f6;
-  color: #111827;
-  border: 1px solid #e5e7eb;
-}
-
-:root .prose mark,
-:root .ProseMirror mark {
-  background-color: #fef08a;
-  color: #713f12;
-}
-
-/* Dark mode overrides */
-[data-theme="dark"] .prose blockquote,
-[data-theme="dark"] .ProseMirror blockquote {
-  color: #9ca3af;
-  border-left-color: #6366f1;
-  background: rgba(99, 102, 241, 0.1);
-}
-
-[data-theme="dark"] .prose code,
-[data-theme="dark"] .ProseMirror code {
-  background: var(--code-bg);
-  color: var(--code-text);
+.prose pre,
+.ProseMirror pre {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-primary);
 }
 
 [data-theme="dark"] .prose pre,
 [data-theme="dark"] .ProseMirror pre {
   background: #1e1e1e;
   color: #e0e0e0;
-  border: 1px solid #3d3d3d;
+}
+
+.prose mark,
+.ProseMirror mark {
+  background-color: var(--accent-yellow-bg);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .prose mark,
@@ -225,7 +215,7 @@
 
 /* Inputs */
 .input-themed {
-  background-color: var(--bg-secondary);
+  background-color: var(--bg-card);
   border: 1px solid var(--border-primary);
   color: var(--text-primary);
 }
@@ -242,7 +232,7 @@
 
 /* Cards */
 .card-themed {
-  background-color: var(--bg-secondary);
+  background-color: var(--bg-card);
   border: 1px solid var(--border-primary);
   box-shadow: var(--shadow-sm);
 }
@@ -258,7 +248,18 @@
   border-right: 1px solid var(--border-primary);
 }
 
-/* Modal Backdrop */
+/* Toolbar */
+.toolbar-themed {
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+/* Modal */
+.modal-themed {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-primary);
+}
+
 .modal-backdrop {
   background-color: rgba(0, 0, 0, 0.5);
 }
@@ -268,48 +269,55 @@
 }
 
 /* Scrollbar theming */
-:root ::-webkit-scrollbar-track {
+::-webkit-scrollbar-track {
   background: var(--bg-tertiary);
 }
 
-:root ::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
   background: var(--border-secondary);
 }
 
-:root ::-webkit-scrollbar-thumb:hover {
+::-webkit-scrollbar-thumb:hover {
   background: var(--text-tertiary);
 }
 
-/* ===== LIGHT MODE FIXES FOR SPECIFIC COMPONENTS ===== */
+/* ===== UTILITY CLASSES ===== */
 
-/* Dashboard cards in light mode */
-:root .bg-\[\#252526\] {
-  background-color: var(--bg-secondary) !important;
-}
-
-:root .border-\[\#3d3d3d\] {
-  border-color: var(--border-primary) !important;
-}
-
-:root .text-gray-100 {
+/* Text colors that respect theme */
+.text-theme-primary {
   color: var(--text-primary) !important;
 }
 
-:root .text-gray-400 {
+.text-theme-secondary {
   color: var(--text-secondary) !important;
 }
 
-:root .text-gray-500 {
+.text-theme-tertiary {
   color: var(--text-tertiary) !important;
 }
 
-/* Editor paper in light mode */
-:root .bg-\[\#1e1e1e\] {
+/* Background colors that respect theme */
+.bg-theme-primary {
   background-color: var(--bg-primary) !important;
 }
 
-/* Ensure hover states work in light mode */
-:root .hover\:bg-\[\#2a2d2e\]:hover,
-:root .hover\:bg-\[\#37373d\]:hover {
-  background-color: var(--bg-hover) !important;
+.bg-theme-secondary {
+  background-color: var(--bg-secondary) !important;
+}
+
+.bg-theme-tertiary {
+  background-color: var(--bg-tertiary) !important;
+}
+
+.bg-theme-card {
+  background-color: var(--bg-card) !important;
+}
+
+/* Border colors that respect theme */
+.border-theme-primary {
+  border-color: var(--border-primary) !important;
+}
+
+.border-theme-secondary {
+  border-color: var(--border-secondary) !important;
 }

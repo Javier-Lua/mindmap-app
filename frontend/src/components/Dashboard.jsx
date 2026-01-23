@@ -81,19 +81,19 @@ export default function Dashboard({ user, onUpdate }) {
 
     setIsDeletingAll(true);
     try {
-      // Optimistic update
-      setData(prev => ({
-        ...prev,
-        recentNotes: [],
-        stats: { ...prev.stats, totalNotes: 0, totalLinks: 0 }
-      }));
-
       const response = await axios.delete(`${API}/api/notes/all?confirm=DELETE_ALL`, { 
         withCredentials: true,
         timeout: 30000 // 30 second timeout for large deletions
       });
 
       console.log(`Deleted ${response.data.deleted} notes`);
+      
+      // Update state after successful deletion
+      setData(prev => ({
+        ...prev,
+        recentNotes: [],
+        stats: { ...prev.stats, totalNotes: 0, totalLinks: 0 }
+      }));
       
       setShowDeleteAllModal(false);
       setDeleteAllConfirm('');
@@ -104,7 +104,7 @@ export default function Dashboard({ user, onUpdate }) {
       alert(`Successfully deleted ${response.data.deleted} notes`);
     } catch (error) {
       console.error('Failed to delete all notes:', error);
-      alert('Failed to delete all notes. Some notes may have been deleted.');
+      alert('Failed to delete all notes: ' + (error.response?.data?.error || error.message));
       loadData(); // Reload to get accurate state
     } finally {
       setIsDeletingAll(false);
@@ -112,15 +112,15 @@ export default function Dashboard({ user, onUpdate }) {
   };
 
   return (
-    <div className="min-h-screen bg-[#1e1e1e] text-gray-100">
+    <div className="min-h-screen theme-bg-primary theme-text-primary">
       <div className="max-w-7xl mx-auto p-8">
         {/* Header */}
-        <header className="flex justify-between items-center mb-10 pb-6 border-b border-[#3d3d3d]">
+        <header className="flex justify-between items-center mb-10 pb-6 border-b border-theme-primary">
           <div>
-            <h1 className="text-3xl font-bold text-gray-100 mb-1">
+            <h1 className="text-3xl font-bold theme-text-primary mb-1">
               Dashboard
             </h1>
-            <p className="text-gray-400">Overview of your notes and connections</p>
+            <p className="text-theme-secondary">Overview of your notes and connections</p>
           </div>
           <div className="flex items-center gap-3">
             {data.stats.totalNotes > 0 && (
@@ -142,33 +142,33 @@ export default function Dashboard({ user, onUpdate }) {
 
         {/* Stats */}
         <div className="grid grid-cols-3 gap-4 mb-8">
-          <div className="bg-[#252526] rounded-lg p-5 shadow-sm border border-[#3d3d3d]">
+          <div className="card-themed rounded-lg p-5">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-gray-400 text-sm mb-1">Total Notes</p>
-                <p className="text-2xl font-bold text-gray-100">{data.stats.totalNotes || 0}</p>
+                <p className="text-theme-secondary text-sm mb-1">Total Notes</p>
+                <p className="text-2xl font-bold theme-text-primary">{data.stats.totalNotes || 0}</p>
               </div>
               <div className="p-3 bg-blue-500 bg-opacity-20 rounded-lg">
                 <FileText className="text-blue-400" size={20} />
               </div>
             </div>
           </div>
-          <div className="bg-[#252526] rounded-lg p-5 shadow-sm border border-[#3d3d3d]">
+          <div className="card-themed rounded-lg p-5">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-gray-400 text-sm mb-1">Connections</p>
-                <p className="text-2xl font-bold text-gray-100">{data.stats.totalLinks || 0}</p>
+                <p className="text-theme-secondary text-sm mb-1">Connections</p>
+                <p className="text-2xl font-bold theme-text-primary">{data.stats.totalLinks || 0}</p>
               </div>
               <div className="p-3 bg-green-500 bg-opacity-20 rounded-lg">
                 <Network className="text-green-400" size={20} />
               </div>
             </div>
           </div>
-          <div className="bg-[#252526] rounded-lg p-5 shadow-sm border border-[#3d3d3d]">
+          <div className="card-themed rounded-lg p-5">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-gray-400 text-sm mb-1">Folders</p>
-                <p className="text-2xl font-bold text-gray-100">{data.folders.length}</p>
+                <p className="text-theme-secondary text-sm mb-1">Folders</p>
+                <p className="text-2xl font-bold theme-text-primary">{data.folders.length}</p>
               </div>
               <div className="p-3 bg-purple-500 bg-opacity-20 rounded-lg">
                 <Folder className="text-purple-400" size={20} />
@@ -180,17 +180,17 @@ export default function Dashboard({ user, onUpdate }) {
         {/* Folders Section */}
         <section className="mb-10">
           <div className="flex justify-between items-center mb-5">
-            <h2 className="text-xl font-bold text-gray-100">Folders</h2>
+            <h2 className="text-xl font-bold theme-text-primary">Folders</h2>
             <button
               onClick={() => setShowNewFolder(!showNewFolder)}
-              className="flex items-center gap-2 px-4 py-2 bg-[#252526] rounded-lg shadow-sm hover:bg-[#2a2d2e] transition-all duration-200 border border-[#3d3d3d] text-gray-300 font-medium text-sm"
+              className="flex items-center gap-2 px-4 py-2 btn-secondary rounded-lg shadow-sm transition-all duration-200 font-medium text-sm"
             >
               <Plus size={16} /> New Folder
             </button>
           </div>
 
           {showNewFolder && (
-            <div className="mb-5 bg-[#252526] rounded-lg p-5 shadow-sm border border-[#3d3d3d]">
+            <div className="mb-5 card-themed rounded-lg p-5">
               <div className="flex gap-3">
                 <input
                   type="text"
@@ -198,7 +198,7 @@ export default function Dashboard({ user, onUpdate }) {
                   onChange={(e) => setNewFolderName(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && createFolder()}
                   placeholder="Folder name..."
-                  className="flex-1 px-4 py-2 bg-[#1e1e1e] border border-[#3d3d3d] rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-gray-200"
+                  className="flex-1 px-4 py-2 input-themed rounded-lg text-sm"
                   autoFocus
                 />
                 <button
@@ -212,7 +212,7 @@ export default function Dashboard({ user, onUpdate }) {
                     setShowNewFolder(false);
                     setNewFolderName('');
                   }}
-                  className="px-5 py-2 bg-[#3d3d3d] text-gray-300 rounded-lg hover:bg-[#4d4d4d] transition-colors text-sm"
+                  className="px-5 py-2 btn-secondary rounded-lg transition-colors text-sm"
                 >
                   Cancel
                 </button>
@@ -225,7 +225,7 @@ export default function Dashboard({ user, onUpdate }) {
               <div
                 key={f.id}
                 onClick={() => navigate(`/mindmap/${f.id}`)}
-                className="group bg-[#252526] rounded-lg p-5 shadow-sm border border-[#3d3d3d] hover:border-blue-500 cursor-pointer transition-all duration-200 relative"
+                className="group card-themed rounded-lg p-5 hover:border-blue-500 cursor-pointer transition-all duration-200 relative"
               >
                 <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
                   <button
@@ -238,21 +238,21 @@ export default function Dashboard({ user, onUpdate }) {
                 </div>
                 
                 <div className="flex items-center gap-3 mb-3">
-                  <div className="p-2 rounded-lg bg-[#3d3d3d]">
-                    <Folder className="text-gray-400" size={20} />
+                  <div className="p-2 rounded-lg bg-theme-tertiary">
+                    <Folder className="text-theme-secondary" size={20} />
                   </div>
                 </div>
-                <h3 className="font-semibold text-gray-100 mb-1 group-hover:text-blue-400 transition-colors">
+                <h3 className="font-semibold theme-text-primary mb-1 group-hover:text-blue-400 transition-colors">
                   {f.name}
                 </h3>
-                <p className="text-sm text-gray-500">{f._count?.notes || 0} notes</p>
+                <p className="text-sm text-theme-tertiary">{f._count?.notes || 0} notes</p>
               </div>
             ))}
             
             {data.folders.length === 0 && !showNewFolder && (
               <div
                 onClick={() => setShowNewFolder(true)}
-                className="border-2 border-dashed border-[#3d3d3d] rounded-lg flex flex-col items-center justify-center text-gray-500 cursor-pointer hover:border-blue-500 hover:text-blue-400 transition-all duration-200 p-5 min-h-[140px]"
+                className="border-2 border-dashed border-theme-primary rounded-lg flex flex-col items-center justify-center text-theme-tertiary cursor-pointer hover:border-blue-500 hover:text-blue-400 transition-all duration-200 p-5 min-h-[140px]"
               >
                 <Plus size={28} className="mb-2" />
                 <p className="font-medium text-sm">Create folder</p>
@@ -264,7 +264,7 @@ export default function Dashboard({ user, onUpdate }) {
         {/* Recent Notes */}
         <section>
           <div className="flex justify-between items-center mb-5">
-            <h2 className="text-xl font-bold text-gray-100">Recent Notes</h2>
+            <h2 className="text-xl font-bold theme-text-primary">Recent Notes</h2>
             <button
               onClick={() => navigate('/mindmap')}
               className="text-blue-400 hover:text-blue-300 font-medium flex items-center gap-1 text-sm"
@@ -279,7 +279,7 @@ export default function Dashboard({ user, onUpdate }) {
                 <div
                   key={n.id}
                   onClick={() => navigate(`/note/${n.id}`)}
-                  className="bg-[#252526] rounded-lg p-4 shadow-sm border border-[#3d3d3d] hover:border-blue-500 cursor-pointer transition-all duration-200 group relative"
+                  className="card-themed rounded-lg p-4 hover:border-blue-500 cursor-pointer transition-all duration-200 group relative"
                 >
                   <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
@@ -293,14 +293,14 @@ export default function Dashboard({ user, onUpdate }) {
                   
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-center gap-2 flex-1 min-w-0">
-                      <div className="p-2 rounded-md bg-[#3d3d3d] flex-shrink-0">
-                        <FileText size={16} className="text-gray-400" />
+                      <div className="p-2 rounded-md bg-theme-tertiary flex-shrink-0">
+                        <FileText size={16} className="text-theme-secondary" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <h3 className="font-semibold text-gray-100 group-hover:text-blue-400 transition-colors text-sm truncate">
+                        <h3 className="font-semibold theme-text-primary group-hover:text-blue-400 transition-colors text-sm truncate">
                           {n.title}
                         </h3>
-                        <p className="text-xs text-gray-500 mt-0.5">
+                        <p className="text-xs text-theme-tertiary mt-0.5">
                           {new Date(n.updatedAt).toLocaleDateString('en-US', { 
                             month: 'short', 
                             day: 'numeric',
@@ -315,9 +315,9 @@ export default function Dashboard({ user, onUpdate }) {
               ))}
             </div>
           ) : (
-            <div className="bg-[#252526] rounded-lg p-10 text-center shadow-sm border border-[#3d3d3d]">
-              <Sparkles className="mx-auto mb-3 text-gray-500" size={40} />
-              <p className="text-gray-400 mb-3">No notes yet</p>
+            <div className="card-themed rounded-lg p-10 text-center">
+              <Sparkles className="mx-auto mb-3 text-theme-tertiary" size={40} />
+              <p className="text-theme-secondary mb-3">No notes yet</p>
               <button
                 onClick={() => navigate('/')}
                 className="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm"
@@ -335,8 +335,8 @@ export default function Dashboard({ user, onUpdate }) {
               <Sparkles className="text-blue-400" size={20} />
             </div>
             <div>
-              <h3 className="font-semibold text-gray-100 mb-1 text-sm">Quick Tip</h3>
-              <p className="text-gray-300 text-sm">Press <kbd className="px-2 py-0.5 bg-[#3d3d3d] rounded shadow-sm border border-[#4d4d4d] font-mono text-xs">Ctrl+K</kbd> anywhere to quickly capture a thought!</p>
+              <h3 className="font-semibold theme-text-primary mb-1 text-sm">Quick Tip</h3>
+              <p className="text-theme-secondary text-sm">Press <kbd className="px-2 py-0.5 bg-theme-tertiary rounded shadow-sm border border-theme-primary font-mono text-xs">Ctrl+K</kbd> anywhere to quickly capture a thought!</p>
             </div>
           </div>
         </div>
@@ -344,31 +344,31 @@ export default function Dashboard({ user, onUpdate }) {
 
       {/* Delete All Confirmation Modal */}
       {showDeleteAllModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
-          <div className="bg-[#252526] rounded-xl shadow-2xl p-6 max-w-md w-full mx-4 border border-red-500">
+        <div className="fixed inset-0 modal-backdrop flex items-center justify-center z-50">
+          <div className="modal-themed rounded-xl shadow-2xl p-6 max-w-md w-full mx-4 border border-red-500">
             <div className="flex items-center gap-3 mb-4">
               <div className="p-3 bg-red-500 bg-opacity-20 rounded-lg">
                 <AlertTriangle className="text-red-500" size={24} />
               </div>
               <div>
-                <h3 className="text-xl font-bold text-gray-100">Delete All Notes?</h3>
-                <p className="text-sm text-gray-400">This action cannot be undone</p>
+                <h3 className="text-xl font-bold theme-text-primary">Delete All Notes?</h3>
+                <p className="text-sm text-theme-secondary">This action cannot be undone</p>
               </div>
             </div>
 
-            <p className="text-gray-300 mb-4 text-sm">
+            <p className="text-theme-secondary mb-4 text-sm">
               You are about to delete <span className="font-bold text-red-400">{data.stats.totalNotes}</span> notes and all their connections.
             </p>
 
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Type <span className="font-mono bg-[#1e1e1e] px-2 py-0.5 rounded text-red-400">DELETE ALL</span> to confirm:
+              <label className="block text-sm font-medium text-theme-secondary mb-2">
+                Type <span className="font-mono bg-theme-tertiary px-2 py-0.5 rounded text-red-400">DELETE ALL</span> to confirm:
               </label>
               <input
                 type="text"
                 value={deleteAllConfirm}
                 onChange={(e) => setDeleteAllConfirm(e.target.value)}
-                className="w-full px-3 py-2 bg-[#1e1e1e] border border-[#3d3d3d] rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-gray-200"
+                className="w-full px-3 py-2 input-themed rounded-lg"
                 placeholder="DELETE ALL"
                 autoFocus
               />
@@ -381,7 +381,7 @@ export default function Dashboard({ user, onUpdate }) {
                   setDeleteAllConfirm('');
                 }}
                 disabled={isDeletingAll}
-                className="flex-1 px-4 py-2 bg-[#3d3d3d] text-gray-300 rounded-lg hover:bg-[#4d4d4d] transition-colors font-medium disabled:opacity-50"
+                className="flex-1 px-4 py-2 btn-secondary rounded-lg transition-colors font-medium disabled:opacity-50"
               >
                 Cancel
               </button>

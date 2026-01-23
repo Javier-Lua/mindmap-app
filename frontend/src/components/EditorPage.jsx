@@ -435,7 +435,7 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
       <div className="min-h-screen flex items-center justify-center theme-bg-primary">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
-          <p className="theme-text-secondary">Loading note...</p>
+          <p className="text-theme-secondary">Loading note...</p>
         </div>
       </div>
     );
@@ -444,7 +444,7 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
   return (
     <div className="flex h-screen theme-bg-primary theme-text-primary overflow-hidden flex-col">
       {/* Static Toolbar */}
-      <div className="border-b p-3 theme-bg-secondary theme-border-primary flex items-center gap-2 flex-wrap">
+      <div className="toolbar-themed p-3 flex items-center gap-2 flex-wrap">
         {/* Save Status */}
         <div className="flex items-center gap-2 mr-4">
           {saving && (
@@ -483,13 +483,13 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
           )}
         </div>
 
-        <div className="h-6 w-px theme-border-primary" />
+        <div className="h-6 w-px border-theme-primary" />
 
         {/* Undo/Redo */}
         <button
           onClick={() => editor?.chain().focus().undo().run()}
           disabled={!editor?.can().undo()}
-          className="p-2 theme-bg-hover rounded transition-colors disabled:opacity-30"
+          className="p-2 theme-bg-hover rounded transition-colors disabled:opacity-30 text-theme-secondary"
           title="Undo"
         >
           <Undo size={16} />
@@ -497,13 +497,13 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
         <button
           onClick={() => editor?.chain().focus().redo().run()}
           disabled={!editor?.can().redo()}
-          className="p-2 theme-bg-hover rounded transition-colors disabled:opacity-30"
+          className="p-2 theme-bg-hover rounded transition-colors disabled:opacity-30 text-theme-secondary"
           title="Redo"
         >
           <Redo size={16} />
         </button>
 
-        <div className="h-6 w-px theme-border-primary" />
+        <div className="h-6 w-px border-theme-primary" />
 
         {/* Font Selection */}
         <select
@@ -512,7 +512,7 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
             setFontFamily(e.target.value);
             editor?.chain().focus().setFontFamily(e.target.value).run();
           }}
-          className="theme-bg-primary theme-text-primary text-sm rounded px-2 py-1 border theme-border-primary focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="input-themed text-sm rounded px-2 py-1"
         >
           <option value="Inter">Inter</option>
           <option value="Georgia">Georgia</option>
@@ -527,7 +527,7 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
         <select
           onChange={(e) => setFontSize(parseInt(e.target.value))}
           value={fontSize}
-          className="theme-bg-primary theme-text-primary text-sm rounded px-2 py-1 border theme-border-primary focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="input-themed text-sm rounded px-2 py-1"
         >
           <option value="12">12</option>
           <option value="14">14</option>
@@ -539,26 +539,26 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
           <option value="32">32</option>
         </select>
 
-        <div className="h-6 w-px theme-border-primary" />
+        <div className="h-6 w-px border-theme-primary" />
 
         {/* Formatting */}
         <button
           onClick={() => editor?.chain().focus().toggleBold().run()}
-          className={`p-2 theme-bg-hover rounded transition-colors ${editor?.isActive('bold') ? 'theme-bg-tertiary' : ''}`}
+          className={`p-2 theme-bg-hover rounded transition-colors text-theme-secondary ${editor?.isActive('bold') ? 'bg-theme-tertiary' : ''}`}
           title="Bold"
         >
           <Bold size={16} />
         </button>
         <button
           onClick={() => editor?.chain().focus().toggleItalic().run()}
-          className={`p-2 theme-bg-hover rounded transition-colors ${editor?.isActive('italic') ? 'theme-bg-tertiary' : ''}`}
+          className={`p-2 theme-bg-hover rounded transition-colors text-theme-secondary ${editor?.isActive('italic') ? 'bg-theme-tertiary' : ''}`}
           title="Italic"
         >
           <Italic size={16} />
         </button>
         <button
           onClick={() => editor?.chain().focus().toggleHighlight().run()}
-          className={`p-2 theme-bg-hover rounded transition-colors ${editor?.isActive('highlight') ? 'theme-bg-tertiary' : ''}`}
+          className={`p-2 theme-bg-hover rounded transition-colors text-theme-secondary ${editor?.isActive('highlight') ? 'bg-theme-tertiary' : ''}`}
           title="Highlight"
         >
           <Highlighter size={16} />
@@ -568,49 +568,49 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
         <input
           type="color"
           onInput={(e) => editor?.chain().focus().setColor(e.target.value).run()}
-          className="w-8 h-8 rounded cursor-pointer border theme-border-primary"
+          className="w-8 h-8 rounded cursor-pointer border border-theme-primary"
           title="Text Color"
         />
 
-        <div className="h-6 w-px theme-border-primary" />
+        <div className="h-6 w-px border-theme-primary" />
 
         {/* Lists */}
         <button
           onClick={() => editor?.chain().focus().toggleBulletList().run()}
-          className={`p-2 theme-bg-hover rounded transition-colors ${editor?.isActive('bulletList') ? 'theme-bg-tertiary' : ''}`}
+          className={`p-2 theme-bg-hover rounded transition-colors text-theme-secondary ${editor?.isActive('bulletList') ? 'bg-theme-tertiary' : ''}`}
           title="Bullet List"
         >
           <List size={16} />
         </button>
         <button
           onClick={() => editor?.chain().focus().toggleOrderedList().run()}
-          className={`p-2 theme-bg-hover rounded transition-colors ${editor?.isActive('orderedList') ? 'theme-bg-tertiary' : ''}`}
+          className={`p-2 theme-bg-hover rounded transition-colors text-theme-secondary ${editor?.isActive('orderedList') ? 'bg-theme-tertiary' : ''}`}
           title="Numbered List"
         >
           <ListOrdered size={16} />
         </button>
         <button
           onClick={() => editor?.chain().focus().toggleCodeBlock().run()}
-          className={`p-2 theme-bg-hover rounded transition-colors ${editor?.isActive('codeBlock') ? 'theme-bg-tertiary' : ''}`}
+          className={`p-2 theme-bg-hover rounded transition-colors text-theme-secondary ${editor?.isActive('codeBlock') ? 'bg-theme-tertiary' : ''}`}
           title="Code Block"
         >
           <Code size={16} />
         </button>
         <button
           onClick={() => editor?.chain().focus().toggleBlockquote().run()}
-          className={`p-2 theme-bg-hover rounded transition-colors ${editor?.isActive('blockquote') ? 'theme-bg-tertiary' : ''}`}
+          className={`p-2 theme-bg-hover rounded transition-colors text-theme-secondary ${editor?.isActive('blockquote') ? 'bg-theme-tertiary' : ''}`}
           title="Quote"
         >
           <Quote size={16} />
         </button>
 
-        <div className="h-6 w-px theme-border-primary" />
+        <div className="h-6 w-px border-theme-primary" />
 
         {/* AI Features */}
         <button
           onClick={runLinker}
           disabled={!selectedText.trim()}
-          className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+          className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm text-white"
           title="Find related notes"
         >
           <Sparkles size={14} />
@@ -620,7 +620,7 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
         <button
           onClick={addAnnotation}
           disabled={!selectedText.trim()}
-          className="flex items-center gap-1 px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+          className="flex items-center gap-1 px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm text-white"
           title="Add annotation"
         >
           <MessageSquare size={14} />
@@ -632,14 +632,14 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
         {/* View Options */}
         <button
           onClick={() => setIsA4(!isA4)}
-          className="p-2 theme-bg-hover rounded transition-colors"
+          className="p-2 theme-bg-hover rounded transition-colors text-theme-secondary"
           title="Toggle Width"
         >
           <Layout size={16} />
         </button>
         <button
           onClick={toggleTheme}
-          className="p-2 theme-bg-hover rounded transition-colors"
+          className="p-2 theme-bg-hover rounded transition-colors text-theme-secondary"
           title="Toggle Theme"
         >
           {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
@@ -648,21 +648,21 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
 
       <div className="flex flex-1 overflow-hidden">
         {/* Left Sidebar - Annotations & Connections */}
-        <div className="w-80 border-r p-5 overflow-y-auto theme-bg-secondary theme-border-primary">
+        <div className="w-80 border-r p-5 overflow-y-auto sidebar-themed">
           {/* Connections */}
           <div className="mb-6">
-            <h3 className="font-semibold theme-text-secondary text-xs uppercase tracking-wider mb-3 flex items-center gap-2">
+            <h3 className="font-semibold text-theme-secondary text-xs uppercase tracking-wider mb-3 flex items-center gap-2">
               <LinkIcon size={14} /> Connections
             </h3>
             
             {connections.outgoing.length > 0 && (
               <div className="mb-3">
-                <p className="text-xs theme-text-tertiary mb-2">Links to:</p>
+                <p className="text-xs text-theme-tertiary mb-2">Links to:</p>
                 {connections.outgoing.map(link => (
                   <div
                     key={link.id}
                     onClick={() => navigate(`/note/${link.target.id}`)}
-                    className="mb-2 p-2.5 theme-bg-tertiary border theme-border-primary rounded-md cursor-pointer hover:border-blue-500 theme-bg-hover transition-colors text-sm"
+                    className="mb-2 p-2.5 bg-theme-tertiary border border-theme-primary rounded-md cursor-pointer hover:border-blue-500 theme-bg-hover transition-colors text-sm"
                   >
                     → {link.target.title}
                   </div>
@@ -672,12 +672,12 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
 
             {connections.incoming.length > 0 && (
               <div>
-                <p className="text-xs theme-text-tertiary mb-2">Linked from:</p>
+                <p className="text-xs text-theme-tertiary mb-2">Linked from:</p>
                 {connections.incoming.map(link => (
                   <div
                     key={link.id}
                     onClick={() => navigate(`/note/${link.source.id}`)}
-                    className="mb-2 p-2.5 theme-bg-tertiary border theme-border-primary rounded-md cursor-pointer hover:border-purple-500 theme-bg-hover transition-colors text-sm"
+                    className="mb-2 p-2.5 bg-theme-tertiary border border-theme-primary rounded-md cursor-pointer hover:border-purple-500 theme-bg-hover transition-colors text-sm"
                   >
                     ← {link.source.title}
                   </div>
@@ -686,13 +686,13 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
             )}
 
             {connections.incoming.length === 0 && connections.outgoing.length === 0 && (
-              <p className="text-sm theme-text-tertiary italic">No connections yet</p>
+              <p className="text-sm text-theme-tertiary italic">No connections yet</p>
             )}
           </div>
 
           {/* Annotations */}
           <div>
-            <h3 className="font-semibold theme-text-secondary text-xs uppercase tracking-wider mb-3 flex items-center gap-2">
+            <h3 className="font-semibold text-theme-secondary text-xs uppercase tracking-wider mb-3 flex items-center gap-2">
               <MessageSquare size={14} /> Annotations
             </h3>
             
@@ -720,7 +720,7 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
             ))}
 
             {annotations.length === 0 && (
-              <p className="text-sm theme-text-tertiary italic">
+              <p className="text-sm text-theme-tertiary italic">
                 Select text and click Annotate
               </p>
             )}
@@ -730,7 +730,7 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
         {/* Main Editor */}
         <div className="flex-1 overflow-y-auto flex justify-center pt-8 pb-20 relative">
           <div
-            className={`relative ${isA4 ? 'w-[21cm]' : 'w-full max-w-4xl'} theme-bg-secondary theme-text-primary shadow-sm p-16 rounded-lg`}
+            className={`relative ${isA4 ? 'w-[21cm]' : 'w-full max-w-4xl'} bg-theme-card theme-text-primary theme-shadow-sm p-16 rounded-lg`}
             style={{ minHeight: isA4 ? '29.7cm' : '800px' }}
           >
             <EditorContent
@@ -743,7 +743,7 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
 
       {/* Linker Suggestions Panel */}
       {showLinker && (
-        <div className="absolute top-20 right-8 w-80 theme-bg-secondary rounded-lg shadow-xl border theme-border-primary p-4 z-50">
+        <div className="absolute top-20 right-8 w-80 modal-themed rounded-lg shadow-xl p-4 z-50">
           <div className="flex justify-between items-center mb-3">
             <h4 className="text-base font-semibold theme-text-primary flex items-center gap-2">
               <Sparkles size={16} className="text-blue-500" />
@@ -751,7 +751,7 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
             </h4>
             <button
               onClick={() => setShowLinker(false)}
-              className="theme-text-tertiary hover:theme-text-primary"
+              className="text-theme-tertiary hover:text-theme-primary"
             >
               <X size={18} />
             </button>
@@ -776,8 +776,8 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
             </div>
           ) : (
             <div className="text-center py-6">
-              <p className="theme-text-secondary text-sm">No similar notes found</p>
-              <p className="text-xs theme-text-tertiary mt-1">Try selecting different text</p>
+              <p className="text-theme-secondary text-sm">No similar notes found</p>
+              <p className="text-xs text-theme-tertiary mt-1">Try selecting different text</p>
             </div>
           )}
         </div>

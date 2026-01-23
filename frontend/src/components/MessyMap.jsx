@@ -26,7 +26,9 @@ export default function MessyMap() {
   const [searchQuery, setSearchQuery] = useState('');
   const [focusedNode, setFocusedNode] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
-  const [theme, setTheme] = useState('dark');
+  const [theme, setTheme] = useState(() => {
+    return document.documentElement.getAttribute('data-theme') || 'dark';
+  });
   const [viewMode, setViewMode] = useState('freeform');
   const [showGrid, setShowGrid] = useState(false);
   const [zoom, setZoom] = useState(1);
@@ -510,12 +512,19 @@ export default function MessyMap() {
     setZoom(prev => Math.max(0.1, Math.min(3, prev * delta)));
   };
 
+  const toggleTheme = () => {
+    const newTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(newTheme);
+    document.documentElement.setAttribute('data-theme', newTheme);
+    localStorage.setItem('theme', newTheme);
+  };
+
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#1e1e1e]">
+      <div className="min-h-screen flex items-center justify-center theme-bg-primary">
         <div className="text-center">
           <Loader className="animate-spin text-purple-600 mx-auto mb-4" size={48} />
-          <p className="text-gray-400">Loading mindmap...</p>
+          <p className="text-theme-secondary">Loading mindmap...</p>
         </div>
       </div>
     );
@@ -523,10 +532,10 @@ export default function MessyMap() {
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#1e1e1e]">
+      <div className="min-h-screen flex items-center justify-center theme-bg-primary">
         <div className="text-center">
           <X className="text-red-500 mx-auto mb-4" size={48} />
-          <p className="text-gray-400 mb-4">{error}</p>
+          <p className="text-theme-secondary mb-4">{error}</p>
           <button
             onClick={() => loadData(true)}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
@@ -538,38 +547,35 @@ export default function MessyMap() {
     );
   }
 
-  const bgColor = theme === 'dark' ? 'bg-[#1e1e1e]' : 'bg-gray-50';
-  const textColor = theme === 'dark' ? 'text-gray-100' : 'text-gray-900';
-
   return (
-    <div className={`relative w-screen h-screen ${bgColor} overflow-hidden transition-colors duration-200`}>
+    <div className="relative w-screen h-screen theme-bg-primary overflow-hidden transition-colors duration-200">
       {/* Top Toolbar */}
-      <div className="absolute top-0 left-0 right-0 z-20 bg-[#252525] border-b border-[#3d3d3d] shadow-sm">
+      <div className="absolute top-0 left-0 right-0 z-20 toolbar-themed shadow-sm">
         <div className="flex items-center justify-between px-4 py-2">
           <div className="flex items-center gap-2">
             <button
               onClick={() => navigate('/')}
-              className="p-2 hover:bg-opacity-10 hover:bg-white rounded-md transition-colors"
+              className="p-2 theme-bg-hover rounded-md transition-colors text-theme-secondary"
               title="Home"
             >
-              <Home size={16} className={textColor} />
+              <Home size={16} />
             </button>
             
-            <div className="w-px h-4 bg-gray-700" />
+            <div className="w-px h-4 bg-theme-primary" />
             
             <button
               onClick={() => loadData(false)}
               disabled={refreshing}
-              className="p-2 hover:bg-opacity-10 hover:bg-white rounded-md transition-colors disabled:opacity-50"
+              className="p-2 theme-bg-hover rounded-md transition-colors disabled:opacity-50 text-theme-secondary"
               title="Refresh (Ctrl+R)"
             >
-              <RefreshCw size={16} className={`${textColor} ${refreshing ? 'animate-spin' : ''}`} />
+              <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
             </button>
 
             <button
               onClick={() => runClustering(true)}
               disabled={isClustering || nodes.length < 3}
-              className="flex items-center gap-1 px-3 py-1.5 hover:bg-opacity-10 hover:bg-white rounded-md transition-colors text-xs disabled:opacity-50"
+              className="flex items-center gap-1 px-3 py-1.5 theme-bg-hover rounded-md transition-colors text-xs disabled:opacity-50 text-theme-primary"
               title="Smart Tidy - Organize notes into clusters"
             >
               <Brain size={14} />
@@ -585,7 +591,7 @@ export default function MessyMap() {
             <button
               onClick={undo}
               disabled={historyIndex <= 0}
-              className={`p-1.5 rounded-md ${historyIndex <= 0 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-opacity-10'} ${textColor}`}
+              className={`p-1.5 rounded-md ${historyIndex <= 0 ? 'opacity-30 cursor-not-allowed' : 'theme-bg-hover'} text-theme-secondary`}
               title="Undo (Ctrl+Z)"
             >
               <RotateCcw size={14} />
@@ -593,25 +599,25 @@ export default function MessyMap() {
             <button
               onClick={redo}
               disabled={historyIndex >= history.length - 1}
-              className={`p-1.5 rounded-md ${historyIndex >= history.length - 1 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-opacity-10'} ${textColor}`}
+              className={`p-1.5 rounded-md ${historyIndex >= history.length - 1 ? 'opacity-30 cursor-not-allowed' : 'theme-bg-hover'} text-theme-secondary`}
               title="Redo (Ctrl+Y)"
             >
               <RotateCw size={14} />
             </button>
 
-            <div className="w-px h-4 bg-gray-700" />
+            <div className="w-px h-4 bg-theme-primary" />
 
             <button
               onClick={() => setShowGrid(!showGrid)}
-              className={`p-1.5 rounded-md ${showGrid ? 'bg-purple-500 bg-opacity-20 text-purple-400' : textColor + ' hover:bg-opacity-10'}`}
+              className={`p-1.5 rounded-md ${showGrid ? 'bg-purple-500 bg-opacity-20 text-purple-400' : 'text-theme-secondary theme-bg-hover'}`}
               title="Toggle Grid"
             >
               <Grid3x3 size={14} />
             </button>
 
             <button
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-              className={`p-1.5 rounded-md hover:bg-opacity-10 ${textColor}`}
+              onClick={toggleTheme}
+              className="p-1.5 rounded-md theme-bg-hover text-theme-secondary"
               title="Toggle Theme"
             >
               {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
@@ -622,9 +628,9 @@ export default function MessyMap() {
 
       {/* Cluster Preview Panel */}
       {showClusters && clusterPreview && (
-        <div className="absolute top-16 right-4 z-30 w-80 bg-[#252526] rounded-lg shadow-xl border border-[#3d3d3d] p-4 max-h-[80vh] overflow-y-auto">
+        <div className="absolute top-16 right-4 z-30 w-80 modal-themed rounded-lg shadow-xl p-4 max-h-[80vh] overflow-y-auto">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-gray-100 flex items-center gap-2">
+            <h3 className="font-semibold theme-text-primary flex items-center gap-2">
               <Sparkles size={16} className="text-purple-400" />
               Cluster Preview
             </h3>
@@ -633,13 +639,13 @@ export default function MessyMap() {
                 setShowClusters(false);
                 setClusterPreview(null);
               }}
-              className="text-gray-500 hover:text-gray-300"
+              className="text-theme-tertiary hover:text-theme-primary"
             >
               <X size={18} />
             </button>
           </div>
 
-          <p className="text-xs text-gray-400 mb-4">
+          <p className="text-xs text-theme-secondary mb-4">
             Found {clusterPreview.length} clusters. Apply to reorganize your notes.
           </p>
 
@@ -647,7 +653,7 @@ export default function MessyMap() {
             {clusterPreview.map((cluster, idx) => (
               <div
                 key={cluster.id}
-                className="p-3 rounded-lg border border-[#3d3d3d]"
+                className="p-3 rounded-lg border border-theme-primary"
                 style={{ backgroundColor: cluster.color }}
               >
                 <div className="font-medium text-gray-900 mb-2 text-sm">
@@ -682,7 +688,7 @@ export default function MessyMap() {
                 setShowClusters(false);
                 setClusterPreview(null);
               }}
-              className="px-3 py-2 bg-[#3d3d3d] text-gray-300 rounded-lg hover:bg-[#4d4d4d] text-sm"
+              className="px-3 py-2 btn-secondary rounded-lg text-sm"
             >
               Cancel
             </button>
@@ -695,7 +701,7 @@ export default function MessyMap() {
         <svg className="absolute inset-0 pointer-events-none" style={{ zIndex: 1 }}>
           <defs>
             <pattern id="grid" width={50 * zoom} height={50 * zoom} patternUnits="userSpaceOnUse">
-              <circle cx={0} cy={0} r={1} fill={theme === 'dark' ? '#444' : '#ddd'} />
+              <circle cx={0} cy={0} r={1} fill={theme === 'dark' ? '#444' : '#ccc'} />
             </pattern>
           </defs>
           <rect width="100%" height="100%" fill="url(#grid)" />
@@ -812,10 +818,10 @@ export default function MessyMap() {
               }}
             >
               <div
-                className={`relative bg-[#252526] rounded-lg shadow-md hover:shadow-xl transition-all duration-200 border-2 ${
+                className={`relative card-themed rounded-lg shadow-md hover:shadow-xl transition-all duration-200 border-2 ${
                   selectedNode?.id === node.id 
                     ? 'border-purple-500 ring-2 ring-purple-500 ring-opacity-30'
-                    : 'border-[#3d3d3d]'
+                    : ''
                 }`}
                 style={{ width: '280px', minHeight: '120px' }}
               >
@@ -841,7 +847,7 @@ export default function MessyMap() {
                         onChange={(e) => setEditingText(e.target.value)}
                         onBlur={saveInlineEdit}
                         autoFocus
-                        className="w-full bg-[#1e1e1e] text-white border border-blue-500 rounded px-2 py-1 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full input-themed border border-blue-500 rounded px-2 py-1 text-sm resize-none"
                         rows={4}
                         placeholder="Type your note..."
                       />
@@ -857,11 +863,11 @@ export default function MessyMap() {
                     </div>
                   ) : (
                     <>
-                      <h3 className="font-semibold text-gray-100 mb-1.5 text-sm line-clamp-2">
+                      <h3 className="font-semibold theme-text-primary mb-1.5 text-sm line-clamp-2">
                         {node.title}
                       </h3>
                       {node.rawText && (
-                        <p className="text-xs text-gray-400 line-clamp-2">
+                        <p className="text-xs text-theme-secondary line-clamp-2">
                           {node.rawText.slice(0, 100)}
                           {node.rawText.length > 100 && '...'}
                         </p>
@@ -909,7 +915,7 @@ export default function MessyMap() {
       </div>
 
       {/* Status Bar */}
-      <div className="absolute bottom-2 left-2 z-20 bg-[#252526] rounded-md shadow-sm px-3 py-1.5 border border-[#3d3d3d] flex items-center gap-3 text-xs text-gray-400">
+      <div className="absolute bottom-2 left-2 z-20 bg-theme-card rounded-md shadow-sm px-3 py-1.5 border border-theme-primary flex items-center gap-3 text-xs text-theme-secondary">
         <span>{nodes.length} notes</span>
         <span>•</span>
         <span>{edges.length} links</span>
@@ -920,10 +926,10 @@ export default function MessyMap() {
       {/* Helper Text */}
       {nodes.length === 0 && !loading && (
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none">
-          <div className="bg-[#252526] rounded-xl shadow-xl border border-[#3d3d3d] p-8">
-            <Plus size={48} className="mx-auto mb-3 text-gray-500" />
-            <p className="text-lg text-gray-100 mb-2 font-semibold">Click anywhere to create a note</p>
-            <p className="text-sm text-gray-400">Double-click to edit • Ctrl+R to refresh</p>
+          <div className="modal-themed rounded-xl shadow-xl p-8">
+            <Plus size={48} className="mx-auto mb-3 text-theme-tertiary" />
+            <p className="text-lg theme-text-primary mb-2 font-semibold">Click anywhere to create a note</p>
+            <p className="text-sm text-theme-secondary">Double-click to edit • Ctrl+R to refresh</p>
           </div>
         </div>
       )}

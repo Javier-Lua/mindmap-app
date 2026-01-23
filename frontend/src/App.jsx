@@ -362,11 +362,11 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
   };
 
   return (
-    <div className="w-64 h-screen bg-[#252526] text-gray-300 flex flex-col border-r border-[#3d3d3d]">
+    <div className="w-64 h-screen sidebar-themed flex flex-col">
       {/* Header */}
-      <div className="p-4 border-b border-[#3d3d3d]">
+      <div className="p-4 border-b border-theme-primary">
         <div className="flex items-center justify-between mb-3">
-          <h1 className="text-sm font-semibold text-gray-100">Messy Notes</h1>
+          <h1 className="text-sm font-semibold text-theme-primary">Messy Notes</h1>
           <div className="flex items-center gap-1">
             <button
               onClick={() => {
@@ -374,30 +374,30 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
                 loadFolders();
               }}
               disabled={isRefreshing}
-              className="p-1.5 hover:bg-[#3d3d3d] rounded transition-colors disabled:opacity-50"
+              className="p-1.5 theme-bg-hover rounded transition-colors disabled:opacity-50"
               title="Refresh"
             >
-              <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
+              <RefreshCw size={14} className={`text-theme-secondary ${isRefreshing ? 'animate-spin' : ''}`} />
             </button>
             <button
               onClick={onLogout}
-              className="p-1.5 hover:bg-[#3d3d3d] rounded transition-colors"
+              className="p-1.5 theme-bg-hover rounded transition-colors"
               title="Logout"
             >
-              <LogOut size={14} />
+              <LogOut size={14} className="text-theme-secondary" />
             </button>
           </div>
         </div>
         
         {/* Search */}
         <div className="relative">
-          <Search size={12} className="absolute left-2 top-2 text-gray-500" />
+          <Search size={12} className="absolute left-2 top-2 text-theme-tertiary" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search notes..."
-            className="w-full pl-7 pr-2 py-1.5 bg-[#3d3d3d] border border-[#4d4d4d] rounded text-xs focus:outline-none focus:border-blue-500 text-gray-200"
+            className="w-full pl-7 pr-2 py-1.5 input-themed rounded text-xs"
           />
         </div>
       </div>
@@ -408,7 +408,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
         <div className="p-2 space-y-1">
           <button
             onClick={onNewNote}
-            className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-[#2a2d2e] rounded text-xs text-left transition-colors"
+            className="w-full flex items-center gap-2 px-2 py-1.5 theme-bg-hover rounded text-xs text-left transition-colors text-theme-primary"
           >
             <Plus size={14} className="text-blue-400" />
             <span>New Note</span>
@@ -416,7 +416,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
           
           <button
             onClick={() => navigate('/dashboard')}
-            className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-[#2a2d2e] rounded text-xs text-left transition-colors"
+            className="w-full flex items-center gap-2 px-2 py-1.5 theme-bg-hover rounded text-xs text-left transition-colors text-theme-primary"
           >
             <LayoutGrid size={14} className="text-purple-400" />
             <span>Dashboard</span>
@@ -424,62 +424,62 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
           
           <button
             onClick={() => navigate('/mindmap')}
-            className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-[#2a2d2e] rounded text-xs text-left transition-colors"
+            className="w-full flex items-center gap-2 px-2 py-1.5 theme-bg-hover rounded text-xs text-left transition-colors text-theme-primary"
           >
             <Network size={14} className="text-green-400" />
             <span>Mindmap</span>
           </button>
         </div>
 
-        <div className="h-px bg-[#3d3d3d] my-2" />
+        <div className="h-px border-theme-primary my-2" />
 
         {/* Sections */}
         <div className="px-2 space-y-1">
           <button
             onClick={() => setActiveSection('recent')}
             className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors ${
-              activeSection === 'recent' ? 'bg-[#37373d]' : 'hover:bg-[#2a2d2e]'
+              activeSection === 'recent' ? 'bg-theme-tertiary text-theme-primary' : 'theme-bg-hover text-theme-secondary'
             }`}
           >
             <Clock size={14} />
             <span>Recent</span>
-            <span className="ml-auto text-[10px] text-gray-500">{recentNotes.length}</span>
+            <span className="ml-auto text-[10px] text-theme-tertiary">{recentNotes.length}</span>
           </button>
           
           <button
             onClick={() => setActiveSection('sticky')}
             className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors ${
-              activeSection === 'sticky' ? 'bg-[#37373d]' : 'hover:bg-[#2a2d2e]'
+              activeSection === 'sticky' ? 'bg-theme-tertiary text-theme-primary' : 'theme-bg-hover text-theme-secondary'
             }`}
           >
             <Star size={14} className="text-yellow-400" />
             <span>Pinned</span>
-            <span className="ml-auto text-[10px] text-gray-500">{stickyNotes.length}</span>
+            <span className="ml-auto text-[10px] text-theme-tertiary">{stickyNotes.length}</span>
           </button>
           
           <button
             onClick={() => setActiveSection('ephemeral')}
             className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors ${
-              activeSection === 'ephemeral' ? 'bg-[#37373d]' : 'hover:bg-[#2a2d2e]'
+              activeSection === 'ephemeral' ? 'bg-theme-tertiary text-theme-primary' : 'theme-bg-hover text-theme-secondary'
             }`}
           >
             <Zap size={14} className="text-gray-400" />
             <span>Quick Notes</span>
-            <span className="ml-auto text-[10px] text-gray-500">{ephemeralNotes.length}</span>
+            <span className="ml-auto text-[10px] text-theme-tertiary">{ephemeralNotes.length}</span>
           </button>
         </div>
 
-        <div className="h-px bg-[#3d3d3d] my-2" />
+        <div className="h-px border-theme-primary my-2" />
 
         {/* Folders */}
         <div className="px-2">
           <div className="flex items-center justify-between px-2 py-1 mb-1">
-            <div className="text-[10px] uppercase tracking-wider text-gray-500">
+            <div className="text-[10px] uppercase tracking-wider text-theme-tertiary">
               Folders
             </div>
             <button
               onClick={() => setIsCreatingFolder(!isCreatingFolder)}
-              className="p-1 hover:bg-[#3d3d3d] rounded transition-colors"
+              className="p-1 theme-bg-hover rounded transition-colors"
               title="New Folder"
             >
               <FolderPlus size={12} className="text-blue-400" />
@@ -487,7 +487,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
           </div>
 
           {isCreatingFolder && (
-            <div className="mb-2 bg-[#2a2d2e] rounded p-2">
+            <div className="mb-2 bg-theme-tertiary rounded p-2">
               <input
                 type="text"
                 value={newFolderName}
@@ -497,7 +497,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
                   if (e.key === 'Escape') setIsCreatingFolder(false);
                 }}
                 placeholder="Folder name..."
-                className="w-full px-2 py-1 bg-[#1e1e1e] border border-[#3d3d3d] rounded text-xs focus:outline-none focus:border-blue-500 text-gray-200 mb-2"
+                className="w-full px-2 py-1 input-themed rounded text-xs mb-2"
                 autoFocus
               />
               <div className="flex gap-1">
@@ -512,7 +512,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
                     setIsCreatingFolder(false);
                     setNewFolderName('');
                   }}
-                  className="px-2 py-1 bg-[#3d3d3d] text-gray-300 rounded text-xs hover:bg-[#4d4d4d]"
+                  className="px-2 py-1 bg-theme-tertiary text-theme-secondary rounded text-xs theme-bg-hover"
                 >
                   Cancel
                 </button>
@@ -523,7 +523,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
           {folders.map(folder => (
             <div key={folder.id} className="group">
               {editingFolder === folder.id ? (
-                <div className="mb-1 bg-[#2a2d2e] rounded p-2">
+                <div className="mb-1 bg-theme-tertiary rounded p-2">
                   <input
                     type="text"
                     value={editingFolderName}
@@ -532,7 +532,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
                       if (e.key === 'Enter') saveEditFolder(folder.id);
                       if (e.key === 'Escape') setEditingFolder(null);
                     }}
-                    className="w-full px-2 py-1 bg-[#1e1e1e] border border-[#3d3d3d] rounded text-xs focus:outline-none focus:border-blue-500 text-gray-200 mb-2"
+                    className="w-full px-2 py-1 input-themed rounded text-xs mb-2"
                     autoFocus
                   />
                   <div className="flex gap-1">
@@ -544,7 +544,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
                     </button>
                     <button
                       onClick={() => setEditingFolder(null)}
-                      className="px-2 py-1 bg-[#3d3d3d] text-gray-300 rounded text-xs hover:bg-[#4d4d4d]"
+                      className="px-2 py-1 bg-theme-tertiary text-theme-secondary rounded text-xs theme-bg-hover"
                     >
                       <X size={12} />
                     </button>
@@ -556,7 +556,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
                     toggleFolder(folder.id);
                     navigate(`/mindmap/${folder.id}`);
                   }}
-                  className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-[#2a2d2e] rounded text-xs text-left transition-colors mb-1"
+                  className="w-full flex items-center gap-2 px-2 py-1.5 theme-bg-hover rounded text-xs text-left transition-colors mb-1 text-theme-primary"
                 >
                   {expandedFolders.has(folder.id) ? (
                     <ChevronDown size={12} />
@@ -565,18 +565,18 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
                   )}
                   <Folder size={14} className="text-blue-400" />
                   <span className="flex-1 truncate">{folder.name}</span>
-                  <span className="text-[10px] text-gray-500">{folder._count?.notes || 0}</span>
+                  <span className="text-[10px] text-theme-tertiary">{folder._count?.notes || 0}</span>
                   <div className="opacity-0 group-hover:opacity-100 flex gap-1">
                     <button
                       onClick={(e) => startEditFolder(folder, e)}
-                      className="p-0.5 hover:bg-[#4d4d4d] rounded"
+                      className="p-0.5 theme-bg-hover rounded"
                       title="Rename"
                     >
                       <Edit3 size={10} className="text-blue-400" />
                     </button>
                     <button
                       onClick={(e) => deleteFolder(folder.id, e)}
-                      className="p-0.5 hover:bg-[#4d4d4d] rounded"
+                      className="p-0.5 theme-bg-hover rounded"
                       title="Delete"
                     >
                       <Trash2 size={10} className="text-red-400" />
@@ -588,17 +588,17 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
           ))}
         </div>
 
-        <div className="h-px bg-[#3d3d3d] my-2" />
+        <div className="h-px border-theme-primary my-2" />
 
         {/* Notes List */}
         <div className="px-2 pb-4">
-          <div className="text-[10px] uppercase tracking-wider text-gray-500 px-2 py-1 mb-1">
+          <div className="text-[10px] uppercase tracking-wider text-theme-tertiary px-2 py-1 mb-1">
             Notes {isLoading && <Loader size={10} className="inline animate-spin ml-1" />}
           </div>
           
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
-              <Loader size={20} className="animate-spin text-gray-500" />
+              <Loader size={20} className="animate-spin text-theme-tertiary" />
             </div>
           ) : (
             <>
@@ -607,18 +607,18 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
                   key={note.id}
                   onClick={(e) => handleNoteClick(note.id, e)}
                   className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors group ${
-                    currentNoteId === note.id ? 'bg-[#37373d] text-white' : 'hover:bg-[#2a2d2e]'
+                    currentNoteId === note.id ? 'bg-theme-tertiary text-theme-primary ring-2 ring-purple-500 ring-opacity-30' : 'theme-bg-hover text-theme-secondary'
                   }`}
                 >
-                  <FileText size={12} className={note.sticky ? 'text-yellow-400' : 'text-gray-500'} />
+                  <FileText size={12} className={note.sticky ? 'text-yellow-400' : 'text-theme-tertiary'} />
                   <div className="flex-1 min-w-0">
                     <div className="truncate">{note.title}</div>
-                    <div className="text-[10px] text-gray-500">
+                    <div className="text-[10px] text-theme-tertiary">
                       {new Date(note.updatedAt).toLocaleDateString()}
                     </div>
                   </div>
                   {note.sticky && <Star size={10} className="text-yellow-400" fill="currentColor" />}
-                  {note.ephemeral && <Zap size={10} className="text-gray-500" />}
+                  {note.ephemeral && <Zap size={10} className="text-theme-tertiary" />}
                   <button
                     onClick={(e) => deleteNote(note.id, e)}
                     className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-600 rounded transition-opacity"
@@ -630,7 +630,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
               ))}
               
               {getDisplayNotes().length === 0 && (
-                <div className="px-2 py-4 text-center text-xs text-gray-500">
+                <div className="px-2 py-4 text-center text-xs text-theme-tertiary">
                   No notes found
                 </div>
               )}
@@ -640,14 +640,14 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
       </div>
 
       {/* User Info */}
-      <div className="p-3 border-t border-[#3d3d3d]">
+      <div className="p-3 border-t border-theme-primary">
         <div className="flex items-center gap-2">
           <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white text-xs font-semibold">
             {user?.name?.charAt(0) || 'U'}
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-xs font-medium text-gray-200 truncate">{user?.name || 'User'}</div>
-            <div className="text-[10px] text-gray-500 truncate">{user?.email}</div>
+            <div className="text-xs font-medium text-theme-primary truncate">{user?.name || 'User'}</div>
+            <div className="text-[10px] text-theme-tertiary truncate">{user?.email}</div>
           </div>
         </div>
       </div>
@@ -774,7 +774,7 @@ function MainLayout({ user }) {
   }, []);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#1e1e1e]">
+    <div className="flex h-screen overflow-hidden theme-bg-primary">
       <Sidebar
         user={user}
         currentNoteId={currentNoteId}
@@ -789,9 +789,9 @@ function MainLayout({ user }) {
       <div className="flex-1 overflow-hidden relative">
         {isCreatingNote && (
           <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-[#252526] rounded-lg p-6 flex items-center gap-3">
+            <div className="modal-themed rounded-lg p-6 flex items-center gap-3">
               <Loader className="animate-spin text-blue-500" size={24} />
-              <span className="text-white">Creating note...</span>
+              <span className="text-theme-primary">Creating note...</span>
             </div>
           </div>
         )}
@@ -898,10 +898,10 @@ export default function App() {
 
   if (authenticated === null) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#1e1e1e]">
+      <div className="min-h-screen flex items-center justify-center theme-bg-primary">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
-          <p className="text-gray-400">Checking authentication...</p>
+          <p className="text-theme-secondary">Checking authentication...</p>
         </div>
       </div>
     );
