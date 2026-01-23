@@ -151,6 +151,16 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
     }
   };
 
+  const handleNoteClick = (noteId, e) => {
+    // Prevent double-click issues
+    e.preventDefault();
+    
+    // Don't navigate if already on this note
+    if (currentNoteId === noteId) return;
+    
+    onSelectNote(noteId);
+  };
+
   const deleteFolder = async (folderId, e) => {
     e.stopPropagation();
     if (!confirm('Delete this folder? Notes will be moved to root.')) return;
@@ -480,7 +490,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
               {getDisplayNotes().map(note => (
                 <button
                   key={note.id}
-                  onClick={() => onSelectNote(note.id)}
+                  onClick={(e) => handleNoteClick(note.id, e)}
                   className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors group ${
                     currentNoteId === note.id ? 'bg-[#37373d] text-white' : 'hover:bg-[#2a2d2e]'
                   }`}
@@ -559,7 +569,7 @@ function MainLayout({ user }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const handleNewNote = async () => {
+  const handleNewNote = useCallback(async () => {
     if (isCreatingNote) return;
     
     setIsCreatingNote(true);
@@ -577,12 +587,15 @@ function MainLayout({ user }) {
     } finally {
       setIsCreatingNote(false);
     }
-  };
+  }, [isCreatingNote, navigate]);
 
-  const handleSelectNote = (noteId) => {
+  const handleSelectNote = useCallback((noteId) => {
+    // Don't navigate if already on this note
+    if (currentNoteId === noteId) return;
+    
     navigate(`/note/${noteId}`);
     setCurrentNoteId(noteId);
-  };
+  }, [currentNoteId, navigate]);
 
   const handleLogout = async () => {
     // Set flag immediately to stop all requests
