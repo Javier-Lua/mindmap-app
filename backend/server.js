@@ -212,20 +212,28 @@ passport.use(new GoogleStrategy({
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 app.get('/auth/google/callback', passport.authenticate('google', { session: false }), (req, res) => {
   const token = jsonwebtoken.sign({ userId: req.user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+  
+  // Set cookie with correct settings
   res.cookie('token', token, { 
     httpOnly: true,
-    sameSite: 'lax',
-    secure: false,
-    maxAge: 7 * 24 * 60 * 60 * 1000
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    path: '/'
   });
-  res.redirect(process.env.FRONTEND_URL);
+  
+  // Redirect to frontend
+  res.redirect(process.env.FRONTEND_URL || 'http://localhost:5173');
 });
 
 const auth = async (req, res, next) => {
   const token = req.cookies.token;
   
   if (!token) {
-    console.warn(`No token found for ${req.method} ${req.path}`);
+    // Don't log warnings for /api/me endpoint - it's expected during logout
+    if (req.path !== '/api/me') {
+      console.warn(`No token found for ${req.method} ${req.path}`);
+    }
     return res.status(401).json({ 
       error: 'Unauthorized - no token',
       action: 'REAUTH_REQUIRED' 
@@ -253,7 +261,10 @@ const auth = async (req, res, next) => {
     req.user = user;
     next();
   } catch (e) {
-    console.error(`Auth error for ${req.method} ${req.path}:`, e.message);
+    // Don't log token errors for /api/me during normal logout flow
+    if (req.path !== '/api/me') {
+      console.error(`Auth error for ${req.method} ${req.path}:`, e.message);
+    }
     
     if (e.name === 'TokenExpiredError') {
       res.clearCookie('token');

@@ -15,12 +15,24 @@ import QuickCapture from './components/QuickCapture';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
+// Global flags to control application state
+window.isLoggingOut = false;
+let hasRedirected = false;
+
 // Add global axios interceptor for auth errors
 axios.interceptors.response.use(
   response => response,
   error => {
-    if (error.response?.data?.action === 'REAUTH_REQUIRED') {
-      window.location.href = '/';
+    // Ignore errors if logging out
+    if (window.isLoggingOut) {
+      return Promise.reject(error);
+    }
+    
+    if (error.response?.data?.action === 'REAUTH_REQUIRED' && !hasRedirected) {
+      hasRedirected = true;
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 100);
     }
     return Promise.reject(error);
   }
@@ -41,6 +53,8 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
   const navigate = useNavigate();
 
   const loadNotes = useCallback(async (showLoader = false) => {
+    if (window.isLoggingOut) return;
+    
     if (showLoader) {
       setIsLoading(true);
     } else {
@@ -52,24 +66,39 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
         withCredentials: true,
         timeout: 10000
       });
-      setNotes(res.data);
+      
+      if (!window.isLoggingOut) {
+        setNotes(res.data);
+      }
     } catch (error) {
-      console.error('Failed to load notes:', error);
+      // Silently fail if it's an auth error
+      if (error.response?.status !== 401) {
+        console.error('Failed to load notes:', error);
+      }
     } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
+      if (!window.isLoggingOut) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
   }, []);
 
   const loadFolders = useCallback(async () => {
+    if (window.isLoggingOut) return;
+    
     try {
       const res = await axios.get(`${API}/api/home`, { 
         withCredentials: true,
         timeout: 10000
       });
-      setFolders(res.data.folders);
+      
+      if (!window.isLoggingOut) {
+        setFolders(res.data.folders);
+      }
     } catch (error) {
-      console.error('Failed to load folders:', error);
+      if (error.response?.status !== 401) {
+        console.error('Failed to load folders:', error);
+      }
     }
   }, []);
 
@@ -90,10 +119,15 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
   // Auto-refresh every 30 seconds
   useEffect(() => {
     const interval = setInterval(() => {
-      loadNotes(false);
-      loadFolders();
+      if (!window.isLoggingOut) {
+        loadNotes(false);
+        loadFolders();
+      }
     }, 30000);
-    return () => clearInterval(interval);
+    
+    return () => {
+      clearInterval(interval);
+    };
   }, [loadNotes, loadFolders]);
 
   const deleteNote = async (noteId, e) => {
@@ -491,8 +525,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
   );
 }
 
-function MainLayout() {
-  const [user, setUser] = useState(null);
+function MainLayout({ user }) {
   const [showQuickCapture, setShowQuickCapture] = useState(false);
   const [currentNoteId, setCurrentNoteId] = useState(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -547,12 +580,29 @@ function MainLayout() {
   };
 
   const handleLogout = async () => {
+    // Set flag to prevent new requests
+    window.isLoggingOut = true;
+    
     try {
-      await axios.post(`${API}/api/logout`, {}, { withCredentials: true });
-      window.location.reload();
+      // Try to call logout endpoint
+      await axios.post(`${API}/api/logout`, {}, { 
+        withCredentials: true,
+        timeout: 2000
+      });
     } catch (error) {
-      console.error('Logout failed:', error);
+      console.log('Logout API call failed, but continuing...', error);
     }
+    
+    // Clear all local data
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch (e) {
+      console.error('Failed to clear storage:', e);
+    }
+    
+    // Force reload to login page
+    window.location.replace('/');
   };
 
   const handleQuickCaptureClose = () => {
@@ -591,7 +641,6 @@ function MainLayout() {
             path="/note/:id" 
             element={
               <EditorPage 
-                onUserLoad={setUser} 
                 onNoteUpdate={handleNoteUpdate}
               />
             } 
@@ -620,6 +669,11 @@ export default function App() {
   }, []);
 
   const checkAuth = async () => {
+    if (window.isLoggingOut) {
+      setAuthenticated(false);
+      return;
+    }
+    
     try {
       const res = await axios.get(`${API}/api/me`, { 
         withCredentials: true,
@@ -627,9 +681,11 @@ export default function App() {
       });
       setAuthenticated(true);
       setUser(res.data);
-      setAuthError(null);
+      hasRedirected = false;
     } catch (error) {
-      console.error('Auth check failed:', error);
+      if (error.response?.status !== 401) {
+        console.error('Auth check failed:', error);
+      }
       setAuthenticated(false);
       
       if (error.response?.data?.action === 'REAUTH_REQUIRED') {
@@ -643,7 +699,7 @@ export default function App() {
       <div className="min-h-screen flex items-center justify-center bg-[#1e1e1e]">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
-          <p className="text-gray-400">Loading...</p>
+          <p className="text-gray-400">Checking authentication...</p>
         </div>
       </div>
     );

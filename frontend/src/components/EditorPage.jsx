@@ -33,7 +33,7 @@ function useDebounce(callback, delay) {
   }, [callback, delay]);
 }
 
-export default function EditorPage({ onUserLoad, onNoteUpdate }) {
+export default function EditorPage({ onNoteUpdate }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const [note, setNote] = useState(null);
@@ -57,21 +57,6 @@ export default function EditorPage({ onUserLoad, onNoteUpdate }) {
   const isSavingRef = useRef(false);
   const cloudSaveIntervalRef = useRef(null);
   const lastChangeTimeRef = useRef(Date.now());
-
-  // Load user data
-  useEffect(() => {
-    const loadUser = async () => {
-      try {
-        const res = await axios.get(`${API}/api/me`, { withCredentials: true });
-        if (onUserLoad) {
-          onUserLoad(res.data);
-        }
-      } catch (error) {
-        console.error('Failed to load user:', error);
-      }
-    };
-    loadUser();
-  }, [onUserLoad]);
 
   // Load from localStorage first, then from server
   useEffect(() => {
