@@ -15,27 +15,147 @@ import QuickCapture from './components/QuickCapture';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
-// Global flags to control application state
+// Global flags
 window.isLoggingOut = false;
+window.isRefreshing = false;
+window.failedQueue = [];
 
-// Configure axios interceptor ONCE - only handle errors, don't redirect
+// Process queued requests after token refresh
+const processQueue = (error, token = null) => {
+  window.failedQueue.forEach(prom => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  window.failedQueue = [];
+};
+
+// Configure axios interceptor ONCE
 let interceptorConfigured = false;
 if (!interceptorConfigured) {
-  axios.interceptors.response.use(
-    response => response,
-    error => {
-      // Only log non-auth errors during normal operation
-      if (!window.isLoggingOut && error.response?.status !== 401) {
-        console.error('API Error:', error.response?.status, error.message);
+  interceptorConfigured = true;
+
+  // Request interceptor - add retry flag
+  axios.interceptors.request.use(
+    config => {
+      // Don't add retry logic to refresh endpoint itself
+      if (config.url?.includes('/refresh-token')) {
+        return config;
       }
+      
+      // Add retry metadata
+      config.metadata = { startTime: new Date() };
+      return config;
+    },
+    error => Promise.reject(error)
+  );
+
+  // Response interceptor - handle 401 errors globally
+  axios.interceptors.response.use(
+    response => {
+      // Log slow requests in dev
+      if (process.env.NODE_ENV === 'development' && response.config.metadata) {
+        const duration = new Date() - response.config.metadata.startTime;
+        if (duration > 2000) {
+          console.warn(`Slow request: ${response.config.url} took ${duration}ms`);
+        }
+      }
+      return response;
+    },
+    async error => {
+      const originalRequest = error.config;
+      
+      // Ignore errors during logout
+      if (window.isLoggingOut) {
+        return Promise.reject(error);
+      }
+      
+      // Handle 401 errors (auth failures)
+      if (error.response?.status === 401 && !originalRequest._retry) {
+        // Prevent infinite retry loops
+        if (originalRequest.url?.includes('/api/me') || 
+            originalRequest.url?.includes('/refresh-token')) {
+          console.error('Auth check or refresh failed - redirecting to login');
+          window.location.href = '/';
+          return Promise.reject(error);
+        }
+        
+        originalRequest._retry = true;
+        
+        // If already refreshing, queue this request
+        if (window.isRefreshing) {
+          return new Promise((resolve, reject) => {
+            window.failedQueue.push({ resolve, reject });
+          })
+            .then(() => axios(originalRequest))
+            .catch(err => Promise.reject(err));
+        }
+        
+        window.isRefreshing = true;
+        
+        try {
+          // Attempt token refresh
+          await axios.post(`${API}/api/refresh-token`, {}, {
+            withCredentials: true,
+            timeout: 5000
+          });
+          
+          console.log('Token refreshed successfully');
+          window.isRefreshing = false;
+          processQueue(null);
+          
+          // Retry original request
+          return axios(originalRequest);
+        } catch (refreshError) {
+          console.error('Token refresh failed:', refreshError);
+          window.isRefreshing = false;
+          processQueue(refreshError);
+          
+          // Clear auth state and redirect to login
+          try {
+            localStorage.clear();
+            sessionStorage.clear();
+          } catch (e) {}
+          
+          window.location.href = '/';
+          return Promise.reject(refreshError);
+        }
+      }
+      
+      // Handle network errors with retry
+      if (!error.response && !originalRequest._retryCount) {
+        originalRequest._retryCount = 0;
+      }
+      
+      if (!error.response && originalRequest._retryCount < 3) {
+        originalRequest._retryCount++;
+        console.log(`Retrying request (${originalRequest._retryCount}/3): ${originalRequest.url}`);
+        
+        // Exponential backoff: 1s, 2s, 4s
+        const delay = Math.pow(2, originalRequest._retryCount - 1) * 1000;
+        await new Promise(resolve => setTimeout(resolve, delay));
+        
+        return axios(originalRequest);
+      }
+      
+      // Log non-401 errors only
+      if (error.response?.status !== 401) {
+        console.error('API Error:', {
+          status: error.response?.status,
+          url: originalRequest?.url,
+          method: originalRequest?.method,
+          message: error.message
+        });
+      }
+      
       return Promise.reject(error);
     }
   );
-  interceptorConfigured = true;
 }
 
-function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refreshTrigger }) {
-  const [notes, setNotes] = useState([]);
+function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refreshTrigger, sidebarNotes, setSidebarNotes }) {
   const [folders, setFolders] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSection, setActiveSection] = useState('recent');
@@ -49,7 +169,6 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
   const navigate = useNavigate();
   const isMountedRef = useRef(true);
 
-  // Track if component is mounted
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -58,7 +177,6 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
   }, []);
 
   const loadNotes = useCallback(async (showLoader = false) => {
-    // Don't make requests if logging out or unmounted
     if (window.isLoggingOut || !isMountedRef.current) return;
     
     if (showLoader) {
@@ -74,12 +192,10 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
       });
       
       if (!window.isLoggingOut && isMountedRef.current) {
-        setNotes(res.data);
+        setSidebarNotes(res.data);
       }
     } catch (error) {
-      // Only handle if still mounted and not logging out
       if (!window.isLoggingOut && isMountedRef.current && error.response?.status === 401) {
-        // Auth failed - trigger logout
         onLogout();
       }
     } finally {
@@ -88,7 +204,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
         setIsRefreshing(false);
       }
     }
-  }, [onLogout]);
+  }, [onLogout, setSidebarNotes]);
 
   const loadFolders = useCallback(async () => {
     if (window.isLoggingOut || !isMountedRef.current) return;
@@ -109,21 +225,21 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
     }
   }, [onLogout]);
 
-  // Initial load - only once
+  // Initial load
   useEffect(() => {
     loadNotes(true);
     loadFolders();
-  }, []); // Empty deps - only run once on mount
+  }, []);
 
-  // Refresh when trigger changes (note created/updated)
+  // Refresh when trigger changes
   useEffect(() => {
     if (refreshTrigger > 0 && !window.isLoggingOut) {
       loadNotes(false);
       loadFolders();
     }
-  }, [refreshTrigger]); // Only depend on refreshTrigger
+  }, [refreshTrigger]);
 
-  // Auto-refresh every 30 seconds - use ref to avoid recreating interval
+  // Auto-refresh every 30 seconds
   useEffect(() => {
     const interval = setInterval(() => {
       if (!window.isLoggingOut && isMountedRef.current) {
@@ -133,31 +249,31 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
     }, 30000);
     
     return () => clearInterval(interval);
-  }, []); // Empty deps - interval uses refs
+  }, []);
 
   const deleteNote = async (noteId, e) => {
     e.stopPropagation();
     if (!confirm('Delete this note?')) return;
     
     try {
+      // Optimistic update
+      setSidebarNotes(prev => prev.filter(n => n.id !== noteId));
+      
       await axios.delete(`${API}/api/notes/${noteId}`, { withCredentials: true });
-      setNotes(notes.filter(n => n.id !== noteId));
+      
       if (currentNoteId === noteId) {
         navigate('/note/new');
       }
     } catch (error) {
       console.error('Failed to delete note:', error);
       alert('Failed to delete note. Please try again.');
+      loadNotes(false); // Reload on error
     }
   };
 
   const handleNoteClick = (noteId, e) => {
-    // Prevent double-click issues
     e.preventDefault();
-    
-    // Don't navigate if already on this note
     if (currentNoteId === noteId) return;
-    
     onSelectNote(noteId);
   };
 
@@ -216,7 +332,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
     }
   };
 
-  const filteredNotes = notes.filter(n => 
+  const filteredNotes = sidebarNotes.filter(n => 
     n.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -370,7 +486,6 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
             </button>
           </div>
 
-          {/* New Folder Input */}
           {isCreatingFolder && (
             <div className="mb-2 bg-[#2a2d2e] rounded p-2">
               <input
@@ -545,6 +660,10 @@ function MainLayout({ user }) {
   const [currentNoteId, setCurrentNoteId] = useState(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isCreatingNote, setIsCreatingNote] = useState(false);
+  
+  // NEW: Store notes locally for immediate updates
+  const [sidebarNotes, setSidebarNotes] = useState([]);
+  
   const navigate = useNavigate();
   const params = useParams();
 
@@ -580,6 +699,9 @@ function MainLayout({ user }) {
       });
       navigate(`/note/${res.data.id}`);
       setCurrentNoteId(res.data.id);
+      
+      // Add to sidebar immediately
+      setSidebarNotes(prev => [res.data, ...prev]);
       setRefreshTrigger(prev => prev + 1);
     } catch (error) {
       console.error('Failed to create note:', error);
@@ -590,30 +712,24 @@ function MainLayout({ user }) {
   }, [isCreatingNote, navigate]);
 
   const handleSelectNote = useCallback((noteId) => {
-    // Don't navigate if already on this note
     if (currentNoteId === noteId) return;
-    
     navigate(`/note/${noteId}`);
     setCurrentNoteId(noteId);
   }, [currentNoteId, navigate]);
 
   const handleLogout = async () => {
-    // Set flag immediately to stop all requests
+    // Set flag BEFORE any async operations
     window.isLoggingOut = true;
+    window.isRefreshing = false;
+    window.failedQueue = [];
     
     try {
-      // Try to call logout endpoint (with short timeout)
       await axios.post(`${API}/api/logout`, {}, { 
         withCredentials: true,
         timeout: 2000
-      }).catch(() => {
-        // Ignore errors - we're logging out anyway
-      });
-    } catch (e) {
-      // Ignore
-    }
+      }).catch(() => {});
+    } catch (e) {}
     
-    // Clear storage
     try {
       localStorage.clear();
       sessionStorage.clear();
@@ -621,7 +737,7 @@ function MainLayout({ user }) {
       console.error('Failed to clear storage:', e);
     }
     
-    // Force full page reload to login
+    // Force full page reload - this clears all state including the flag
     window.location.href = '/';
   };
 
@@ -634,6 +750,29 @@ function MainLayout({ user }) {
     setRefreshTrigger(prev => prev + 1);
   };
 
+  // NEW: Handle live note updates from editor
+  const handleLiveNoteUpdate = useCallback((noteId, updates) => {
+    setSidebarNotes(prev => {
+      const noteIndex = prev.findIndex(n => n.id === noteId);
+      if (noteIndex === -1) return prev;
+      
+      const newNotes = [...prev];
+      newNotes[noteIndex] = {
+        ...newNotes[noteIndex],
+        ...updates,
+        updatedAt: new Date().toISOString() // Update timestamp
+      };
+      
+      // Move to top if title changed (indicates active editing)
+      if (updates.title) {
+        const [updated] = newNotes.splice(noteIndex, 1);
+        newNotes.unshift(updated);
+      }
+      
+      return newNotes;
+    });
+  }, []);
+
   return (
     <div className="flex h-screen overflow-hidden bg-[#1e1e1e]">
       <Sidebar
@@ -643,6 +782,8 @@ function MainLayout({ user }) {
         onNewNote={handleNewNote}
         onLogout={handleLogout}
         refreshTrigger={refreshTrigger}
+        sidebarNotes={sidebarNotes}
+        setSidebarNotes={setSidebarNotes}
       />
       
       <div className="flex-1 overflow-hidden relative">
@@ -662,6 +803,7 @@ function MainLayout({ user }) {
             element={
               <EditorPage 
                 onNoteUpdate={handleNoteUpdate}
+                onLiveUpdate={handleLiveNoteUpdate}
               />
             } 
           />
@@ -683,7 +825,38 @@ export default function App() {
   const [authenticated, setAuthenticated] = useState(null);
   const [user, setUser] = useState(null);
   const [authError, setAuthError] = useState(null);
+  const [theme, setTheme] = useState(() => {
+    return localStorage.getItem('theme') || 'dark';
+  });
   const hasCheckedAuth = useRef(false);
+
+  // NEW: Periodic token refresh (every 6 days to stay under 7-day expiry)
+  useEffect(() => {
+    if (!authenticated) return;
+
+    const refreshInterval = setInterval(async () => {
+      if (window.isLoggingOut) return;
+
+      try {
+        await axios.post(`${API}/api/refresh-token`, {}, {
+          withCredentials: true,
+          timeout: 5000
+        });
+        console.log('Token auto-refreshed');
+      } catch (error) {
+        console.error('Auto-refresh failed:', error);
+        // Don't logout here - let interceptor handle it on next request
+      }
+    }, 6 * 24 * 60 * 60 * 1000); // Every 6 days
+
+    return () => clearInterval(refreshInterval);
+  }, [authenticated]);
+
+  // Apply theme to document
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     // Only check auth once

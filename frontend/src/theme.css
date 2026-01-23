@@ -1,0 +1,315 @@
+/* ===== THEME SYSTEM ===== */
+
+:root {
+  /* Light Mode Colors */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f9fafb;
+  --bg-tertiary: #f3f4f6;
+  --bg-hover: #e5e7eb;
+  
+  --text-primary: #111827;
+  --text-secondary: #6b7280;
+  --text-tertiary: #9ca3af;
+  
+  --border-primary: #e5e7eb;
+  --border-secondary: #d1d5db;
+  --border-focus: #6366f1;
+  
+  --accent-blue: #3b82f6;
+  --accent-blue-hover: #2563eb;
+  --accent-blue-bg: #eff6ff;
+  
+  --accent-purple: #8b5cf6;
+  --accent-purple-hover: #7c3aed;
+  --accent-purple-bg: #f5f3ff;
+  
+  --accent-green: #10b981;
+  --accent-green-hover: #059669;
+  --accent-green-bg: #f0fdf4;
+  
+  --accent-red: #ef4444;
+  --accent-red-hover: #dc2626;
+  --accent-red-bg: #fef2f2;
+  
+  --accent-yellow: #f59e0b;
+  --accent-yellow-hover: #d97706;
+  --accent-yellow-bg: #fffbeb;
+  
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  
+  --editor-bg: #ffffff;
+  --editor-text: #111827;
+  --code-bg: #f3f4f6;
+  --code-text: #6366f1;
+}
+
+[data-theme="dark"] {
+  /* Dark Mode Colors */
+  --bg-primary: #1e1e1e;
+  --bg-secondary: #252526;
+  --bg-tertiary: #2d2d30;
+  --bg-hover: #37373d;
+  
+  --text-primary: #e5e5e5;
+  --text-secondary: #9ca3af;
+  --text-tertiary: #6b7280;
+  
+  --border-primary: #3d3d3d;
+  --border-secondary: #4d4d4d;
+  --border-focus: #6366f1;
+  
+  --accent-blue: #60a5fa;
+  --accent-blue-hover: #3b82f6;
+  --accent-blue-bg: rgba(59, 130, 246, 0.1);
+  
+  --accent-purple: #a78bfa;
+  --accent-purple-hover: #8b5cf6;
+  --accent-purple-bg: rgba(139, 92, 246, 0.1);
+  
+  --accent-green: #34d399;
+  --accent-green-hover: #10b981;
+  --accent-green-bg: rgba(16, 185, 129, 0.1);
+  
+  --accent-red: #f87171;
+  --accent-red-hover: #ef4444;
+  --accent-red-bg: rgba(239, 68, 68, 0.1);
+  
+  --accent-yellow: #fbbf24;
+  --accent-yellow-hover: #f59e0b;
+  --accent-yellow-bg: rgba(245, 158, 11, 0.1);
+  
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.7);
+  
+  --editor-bg: #252526;
+  --editor-text: #e5e5e5;
+  --code-bg: #1e1e1e;
+  --code-text: #a78bfa;
+}
+
+/* ===== THEME-AWARE UTILITIES ===== */
+
+.theme-bg-primary {
+  background-color: var(--bg-primary);
+}
+
+.theme-bg-secondary {
+  background-color: var(--bg-secondary);
+}
+
+.theme-bg-tertiary {
+  background-color: var(--bg-tertiary);
+}
+
+.theme-bg-hover:hover {
+  background-color: var(--bg-hover);
+}
+
+.theme-text-primary {
+  color: var(--text-primary);
+}
+
+.theme-text-secondary {
+  color: var(--text-secondary);
+}
+
+.theme-text-tertiary {
+  color: var(--text-tertiary);
+}
+
+.theme-border-primary {
+  border-color: var(--border-primary);
+}
+
+.theme-border-secondary {
+  border-color: var(--border-secondary);
+}
+
+.theme-shadow-sm {
+  box-shadow: var(--shadow-sm);
+}
+
+.theme-shadow-md {
+  box-shadow: var(--shadow-md);
+}
+
+.theme-shadow-lg {
+  box-shadow: var(--shadow-lg);
+}
+
+/* ===== LIGHT MODE SPECIFIC FIXES ===== */
+
+/* Ensure proper contrast in light mode */
+:root .prose,
+:root .ProseMirror {
+  color: var(--editor-text);
+}
+
+:root .prose blockquote,
+:root .ProseMirror blockquote {
+  color: #4b5563;
+  border-left-color: #6366f1;
+  background: rgba(99, 102, 241, 0.05);
+}
+
+:root .prose code,
+:root .ProseMirror code {
+  background: var(--code-bg);
+  color: var(--code-text);
+}
+
+:root .prose pre,
+:root .ProseMirror pre {
+  background: #f3f4f6;
+  color: #111827;
+  border: 1px solid #e5e7eb;
+}
+
+:root .prose mark,
+:root .ProseMirror mark {
+  background-color: #fef08a;
+  color: #713f12;
+}
+
+/* Dark mode overrides */
+[data-theme="dark"] .prose blockquote,
+[data-theme="dark"] .ProseMirror blockquote {
+  color: #9ca3af;
+  border-left-color: #6366f1;
+  background: rgba(99, 102, 241, 0.1);
+}
+
+[data-theme="dark"] .prose code,
+[data-theme="dark"] .ProseMirror code {
+  background: var(--code-bg);
+  color: var(--code-text);
+}
+
+[data-theme="dark"] .prose pre,
+[data-theme="dark"] .ProseMirror pre {
+  background: #1e1e1e;
+  color: #e0e0e0;
+  border: 1px solid #3d3d3d;
+}
+
+[data-theme="dark"] .prose mark,
+[data-theme="dark"] .ProseMirror mark {
+  background-color: rgba(254, 240, 138, 0.3);
+  color: #fef08a;
+}
+
+/* ===== COMPONENT-SPECIFIC THEMING ===== */
+
+/* Buttons */
+.btn-primary {
+  background-color: var(--accent-blue);
+  color: white;
+}
+
+.btn-primary:hover {
+  background-color: var(--accent-blue-hover);
+}
+
+.btn-secondary {
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-primary);
+}
+
+.btn-secondary:hover {
+  background-color: var(--bg-hover);
+}
+
+/* Inputs */
+.input-themed {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  color: var(--text-primary);
+}
+
+.input-themed:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.input-themed::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* Cards */
+.card-themed {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.card-themed:hover {
+  border-color: var(--accent-blue);
+  box-shadow: var(--shadow-md);
+}
+
+/* Sidebar */
+.sidebar-themed {
+  background-color: var(--bg-secondary);
+  border-right: 1px solid var(--border-primary);
+}
+
+/* Modal Backdrop */
+.modal-backdrop {
+  background-color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="dark"] .modal-backdrop {
+  background-color: rgba(0, 0, 0, 0.7);
+}
+
+/* Scrollbar theming */
+:root ::-webkit-scrollbar-track {
+  background: var(--bg-tertiary);
+}
+
+:root ::-webkit-scrollbar-thumb {
+  background: var(--border-secondary);
+}
+
+:root ::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+
+/* ===== LIGHT MODE FIXES FOR SPECIFIC COMPONENTS ===== */
+
+/* Dashboard cards in light mode */
+:root .bg-\[\#252526\] {
+  background-color: var(--bg-secondary) !important;
+}
+
+:root .border-\[\#3d3d3d\] {
+  border-color: var(--border-primary) !important;
+}
+
+:root .text-gray-100 {
+  color: var(--text-primary) !important;
+}
+
+:root .text-gray-400 {
+  color: var(--text-secondary) !important;
+}
+
+:root .text-gray-500 {
+  color: var(--text-tertiary) !important;
+}
+
+/* Editor paper in light mode */
+:root .bg-\[\#1e1e1e\] {
+  background-color: var(--bg-primary) !important;
+}
+
+/* Ensure hover states work in light mode */
+:root .hover\:bg-\[\#2a2d2e\]:hover,
+:root .hover\:bg-\[\#37373d\]:hover {
+  background-color: var(--bg-hover) !important;
+}

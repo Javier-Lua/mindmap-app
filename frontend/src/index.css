@@ -22,7 +22,7 @@ code {
     monospace;
 }
 
-/* TipTap Editor Styles */
+/* ===== TipTap Editor Styles ===== */
 .ProseMirror {
   outline: none;
   min-height: 300px;
@@ -38,6 +38,217 @@ code {
 
 .ProseMirror-focused {
   outline: none;
+}
+
+/* ===== CRITICAL: List Styles ===== */
+.prose ul,
+.ProseMirror ul {
+  list-style-type: disc;
+  margin-left: 1.5rem;
+  margin-bottom: 1rem;
+  padding-left: 0.5rem;
+}
+
+.prose ol,
+.ProseMirror ol {
+  list-style-type: decimal;
+  margin-left: 1.5rem;
+  margin-bottom: 1rem;
+  padding-left: 0.5rem;
+}
+
+.prose ul ul,
+.ProseMirror ul ul {
+  list-style-type: circle;
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.prose ol ol,
+.ProseMirror ol ol {
+  list-style-type: lower-alpha;
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.prose li,
+.ProseMirror li {
+  margin-bottom: 0.5rem;
+  line-height: 1.75;
+  display: list-item;
+}
+
+.prose li > p,
+.ProseMirror li > p {
+  margin: 0;
+}
+
+/* Nested lists */
+.prose li > ul,
+.prose li > ol,
+.ProseMirror li > ul,
+.ProseMirror li > ol {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+/* ===== CRITICAL: Blockquote Styles ===== */
+.prose blockquote,
+.ProseMirror blockquote {
+  border-left: 4px solid #6366f1;
+  padding-left: 1rem;
+  margin-left: 0;
+  margin-right: 0;
+  margin-top: 1.5rem;
+  margin-bottom: 1.5rem;
+  font-style: italic;
+  color: #6b7280;
+  background: rgba(99, 102, 241, 0.05);
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-radius: 0.25rem;
+}
+
+.prose blockquote p,
+.ProseMirror blockquote p {
+  margin: 0;
+  line-height: 1.75;
+}
+
+/* ===== Code Block Styles ===== */
+.prose pre,
+.ProseMirror pre {
+  background: #1e1e1e;
+  color: #e0e0e0;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin: 1rem 0;
+  overflow-x: auto;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.875rem;
+  line-height: 1.7;
+}
+
+.prose code,
+.ProseMirror code {
+  background: rgba(99, 102, 241, 0.1);
+  color: #6366f1;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.875em;
+}
+
+.prose pre code,
+.ProseMirror pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* ===== Heading Styles ===== */
+.prose h1,
+.ProseMirror h1 {
+  font-size: 2em;
+  font-weight: 700;
+  margin-top: 0;
+  margin-bottom: 0.75em;
+  line-height: 1.2;
+}
+
+.prose h2,
+.ProseMirror h2 {
+  font-size: 1.5em;
+  font-weight: 600;
+  margin-top: 1.5em;
+  margin-bottom: 0.75em;
+  line-height: 1.3;
+}
+
+.prose h3,
+.ProseMirror h3 {
+  font-size: 1.25em;
+  font-weight: 600;
+  margin-top: 1.25em;
+  margin-bottom: 0.5em;
+  line-height: 1.4;
+}
+
+/* ===== Paragraph Styles ===== */
+.prose p,
+.ProseMirror p {
+  margin-bottom: 1em;
+  line-height: 1.75;
+}
+
+/* ===== Highlight/Mark Styles ===== */
+.prose mark,
+.ProseMirror mark {
+  background-color: #fef08a;
+  padding: 0.125em 0.25em;
+  border-radius: 0.25em;
+  color: inherit;
+}
+
+/* ===== Text Formatting ===== */
+.prose strong,
+.ProseMirror strong {
+  font-weight: 700;
+}
+
+.prose em,
+.ProseMirror em {
+  font-style: italic;
+}
+
+.prose u,
+.ProseMirror u {
+  text-decoration: underline;
+}
+
+/* ===== Horizontal Rule ===== */
+.prose hr,
+.ProseMirror hr {
+  border: none;
+  border-top: 2px solid #e5e7eb;
+  margin: 2rem 0;
+}
+
+/* ===== Link Styles ===== */
+.prose a,
+.ProseMirror a {
+  color: #6366f1;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.prose a:hover,
+.ProseMirror a:hover {
+  color: #4f46e5;
+}
+
+/* ===== Table Styles (if needed) ===== */
+.prose table,
+.ProseMirror table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+}
+
+.prose th,
+.prose td,
+.ProseMirror th,
+.ProseMirror td {
+  border: 1px solid #e5e7eb;
+  padding: 0.75rem;
+  text-align: left;
+}
+
+.prose th,
+.ProseMirror th {
+  background: #f9fafb;
+  font-weight: 600;
 }
 
 /* Custom Scrollbar */
@@ -57,6 +268,19 @@ code {
 
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+}
+
+/* Dark mode scrollbar */
+.bg-\[\#1e1e1e\] ::-webkit-scrollbar-track {
+  background: #252526;
+}
+
+.bg-\[\#1e1e1e\] ::-webkit-scrollbar-thumb {
+  background: #3d3d3d;
+}
+
+.bg-\[\#1e1e1e\] ::-webkit-scrollbar-thumb:hover {
+  background: #4d4d4d;
 }
 
 /* Line Clamp Utility */
@@ -98,47 +322,6 @@ code {
 /* Prose Improvements */
 .prose {
   max-width: none;
-}
-
-.prose h1 {
-  font-size: 2em;
-  font-weight: 700;
-  margin-bottom: 0.5em;
-}
-
-.prose h2 {
-  font-size: 1.5em;
-  font-weight: 600;
-  margin-top: 1em;
-  margin-bottom: 0.5em;
-}
-
-.prose p {
-  margin-bottom: 1em;
-  line-height: 1.75;
-}
-
-.prose ul, .prose ol {
-  margin-bottom: 1em;
-  padding-left: 1.5em;
-}
-
-.prose li {
-  margin-bottom: 0.5em;
-}
-
-.prose mark {
-  background-color: #fef08a;
-  padding: 0.125em 0.25em;
-  border-radius: 0.25em;
-}
-
-.prose strong {
-  font-weight: 700;
-}
-
-.prose em {
-  font-style: italic;
 }
 
 /* PDF Viewer */

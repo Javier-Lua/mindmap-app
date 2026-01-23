@@ -31,7 +31,7 @@ function useDebounce(callback, delay) {
   }, [callback, delay]);
 }
 
-export default function EditorPage({ onNoteUpdate }) {
+export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const [note, setNote] = useState(null);
@@ -44,7 +44,9 @@ export default function EditorPage({ onNoteUpdate }) {
   const [linkerSuggestions, setLinkerSuggestions] = useState([]);
   const [showLinker, setShowLinker] = useState(false);
   const [isA4, setIsA4] = useState(true);
-  const [theme, setTheme] = useState('dark');
+  const [theme, setTheme] = useState(() => {
+    return document.documentElement.getAttribute('data-theme') || 'dark';
+  });
   const [fontSize, setFontSize] = useState(16);
   const [fontFamily, setFontFamily] = useState('Inter');
   const [selectedText, setSelectedText] = useState('');
@@ -59,6 +61,13 @@ export default function EditorPage({ onNoteUpdate }) {
   const editorUpdateRef = useRef(false); // Flag to prevent update loops
   const cloudSaveIntervalRef = useRef(null);
   const lastChangeTimeRef = useRef(Date.now());
+
+  const toggleTheme = () => {
+    const newTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(newTheme);
+    document.documentElement.setAttribute('data-theme', newTheme);
+    localStorage.setItem('theme', newTheme);
+  };
 
   // Initialize editor ONCE
   const editor = useEditor({
@@ -77,10 +86,7 @@ export default function EditorPage({ onNoteUpdate }) {
       },
     },
     onUpdate: ({ editor }) => {
-      // Ignore updates that we triggered programmatically
       if (editorUpdateRef.current) return;
-      
-      // Don't save if no note loaded yet
       if (!note?.id || loading) return;
       
       const json = editor.getJSON();
@@ -98,7 +104,15 @@ export default function EditorPage({ onNoteUpdate }) {
       saveToLocalStorage(updatedNote);
       setHasUnsavedChanges(true);
       
-      // Smart cloud save on large changes
+      // NEW: Notify sidebar of title change
+      if (onLiveUpdate) {
+        onLiveUpdate(note.id, {
+          title,
+          rawText: text,
+          updatedAt: new Date().toISOString()
+        });
+      }
+      
       const timeSinceLastChange = Date.now() - lastChangeTimeRef.current;
       if (timeSinceLastChange > 5000) {
         const charDiff = Math.abs((text?.length || 0) - (note.rawText?.length || 0));
@@ -418,24 +432,19 @@ export default function EditorPage({ onNoteUpdate }) {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#1e1e1e]">
+      <div className="min-h-screen flex items-center justify-center theme-bg-primary">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
-          <p className="text-gray-400">Loading note...</p>
+          <p className="theme-text-secondary">Loading note...</p>
         </div>
       </div>
     );
   }
 
-  const themeClass = theme === 'dark' ? 'bg-[#1e1e1e] text-white' : 'bg-white text-gray-900';
-  const sidebarClass = theme === 'dark' ? 'bg-[#252526] border-[#3d3d3d]' : 'bg-gray-50 border-gray-200';
-  const paperClass = theme === 'dark' ? 'bg-[#252526] text-white' : 'bg-white text-gray-900';
-  const toolbarClass = theme === 'dark' ? 'bg-[#252526] border-[#3d3d3d]' : 'bg-gray-50 border-gray-200';
-
   return (
-    <div className={`flex h-screen ${themeClass} overflow-hidden flex-col`}>
+    <div className="flex h-screen theme-bg-primary theme-text-primary overflow-hidden flex-col">
       {/* Static Toolbar */}
-      <div className={`border-b p-3 ${toolbarClass} flex items-center gap-2 flex-wrap`}>
+      <div className="border-b p-3 theme-bg-secondary theme-border-primary flex items-center gap-2 flex-wrap">
         {/* Save Status */}
         <div className="flex items-center gap-2 mr-4">
           {saving && (
@@ -474,13 +483,13 @@ export default function EditorPage({ onNoteUpdate }) {
           )}
         </div>
 
-        <div className="h-6 w-px bg-gray-700" />
+        <div className="h-6 w-px theme-border-primary" />
 
         {/* Undo/Redo */}
         <button
           onClick={() => editor?.chain().focus().undo().run()}
           disabled={!editor?.can().undo()}
-          className="p-2 hover:bg-[#37373d] rounded transition-colors disabled:opacity-30"
+          className="p-2 theme-bg-hover rounded transition-colors disabled:opacity-30"
           title="Undo"
         >
           <Undo size={16} />
@@ -488,13 +497,13 @@ export default function EditorPage({ onNoteUpdate }) {
         <button
           onClick={() => editor?.chain().focus().redo().run()}
           disabled={!editor?.can().redo()}
-          className="p-2 hover:bg-[#37373d] rounded transition-colors disabled:opacity-30"
+          className="p-2 theme-bg-hover rounded transition-colors disabled:opacity-30"
           title="Redo"
         >
           <Redo size={16} />
         </button>
 
-        <div className="h-6 w-px bg-gray-700" />
+        <div className="h-6 w-px theme-border-primary" />
 
         {/* Font Selection */}
         <select
@@ -503,7 +512,7 @@ export default function EditorPage({ onNoteUpdate }) {
             setFontFamily(e.target.value);
             editor?.chain().focus().setFontFamily(e.target.value).run();
           }}
-          className="bg-[#1e1e1e] text-white text-sm rounded px-2 py-1 border border-[#3d3d3d] focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="theme-bg-primary theme-text-primary text-sm rounded px-2 py-1 border theme-border-primary focus:outline-none focus:ring-1 focus:ring-blue-500"
         >
           <option value="Inter">Inter</option>
           <option value="Georgia">Georgia</option>
@@ -518,7 +527,7 @@ export default function EditorPage({ onNoteUpdate }) {
         <select
           onChange={(e) => setFontSize(parseInt(e.target.value))}
           value={fontSize}
-          className="bg-[#1e1e1e] text-white text-sm rounded px-2 py-1 border border-[#3d3d3d] focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="theme-bg-primary theme-text-primary text-sm rounded px-2 py-1 border theme-border-primary focus:outline-none focus:ring-1 focus:ring-blue-500"
         >
           <option value="12">12</option>
           <option value="14">14</option>
@@ -530,26 +539,26 @@ export default function EditorPage({ onNoteUpdate }) {
           <option value="32">32</option>
         </select>
 
-        <div className="h-6 w-px bg-gray-700" />
+        <div className="h-6 w-px theme-border-primary" />
 
         {/* Formatting */}
         <button
           onClick={() => editor?.chain().focus().toggleBold().run()}
-          className={`p-2 hover:bg-[#37373d] rounded transition-colors ${editor?.isActive('bold') ? 'bg-[#37373d]' : ''}`}
+          className={`p-2 theme-bg-hover rounded transition-colors ${editor?.isActive('bold') ? 'theme-bg-tertiary' : ''}`}
           title="Bold"
         >
           <Bold size={16} />
         </button>
         <button
           onClick={() => editor?.chain().focus().toggleItalic().run()}
-          className={`p-2 hover:bg-[#37373d] rounded transition-colors ${editor?.isActive('italic') ? 'bg-[#37373d]' : ''}`}
+          className={`p-2 theme-bg-hover rounded transition-colors ${editor?.isActive('italic') ? 'theme-bg-tertiary' : ''}`}
           title="Italic"
         >
           <Italic size={16} />
         </button>
         <button
           onClick={() => editor?.chain().focus().toggleHighlight().run()}
-          className={`p-2 hover:bg-[#37373d] rounded transition-colors ${editor?.isActive('highlight') ? 'bg-[#37373d]' : ''}`}
+          className={`p-2 theme-bg-hover rounded transition-colors ${editor?.isActive('highlight') ? 'theme-bg-tertiary' : ''}`}
           title="Highlight"
         >
           <Highlighter size={16} />
@@ -559,43 +568,43 @@ export default function EditorPage({ onNoteUpdate }) {
         <input
           type="color"
           onInput={(e) => editor?.chain().focus().setColor(e.target.value).run()}
-          className="w-8 h-8 rounded cursor-pointer border border-[#3d3d3d]"
+          className="w-8 h-8 rounded cursor-pointer border theme-border-primary"
           title="Text Color"
         />
 
-        <div className="h-6 w-px bg-gray-700" />
+        <div className="h-6 w-px theme-border-primary" />
 
         {/* Lists */}
         <button
           onClick={() => editor?.chain().focus().toggleBulletList().run()}
-          className={`p-2 hover:bg-[#37373d] rounded transition-colors ${editor?.isActive('bulletList') ? 'bg-[#37373d]' : ''}`}
+          className={`p-2 theme-bg-hover rounded transition-colors ${editor?.isActive('bulletList') ? 'theme-bg-tertiary' : ''}`}
           title="Bullet List"
         >
           <List size={16} />
         </button>
         <button
           onClick={() => editor?.chain().focus().toggleOrderedList().run()}
-          className={`p-2 hover:bg-[#37373d] rounded transition-colors ${editor?.isActive('orderedList') ? 'bg-[#37373d]' : ''}`}
+          className={`p-2 theme-bg-hover rounded transition-colors ${editor?.isActive('orderedList') ? 'theme-bg-tertiary' : ''}`}
           title="Numbered List"
         >
           <ListOrdered size={16} />
         </button>
         <button
           onClick={() => editor?.chain().focus().toggleCodeBlock().run()}
-          className={`p-2 hover:bg-[#37373d] rounded transition-colors ${editor?.isActive('codeBlock') ? 'bg-[#37373d]' : ''}`}
+          className={`p-2 theme-bg-hover rounded transition-colors ${editor?.isActive('codeBlock') ? 'theme-bg-tertiary' : ''}`}
           title="Code Block"
         >
           <Code size={16} />
         </button>
         <button
           onClick={() => editor?.chain().focus().toggleBlockquote().run()}
-          className={`p-2 hover:bg-[#37373d] rounded transition-colors ${editor?.isActive('blockquote') ? 'bg-[#37373d]' : ''}`}
+          className={`p-2 theme-bg-hover rounded transition-colors ${editor?.isActive('blockquote') ? 'theme-bg-tertiary' : ''}`}
           title="Quote"
         >
           <Quote size={16} />
         </button>
 
-        <div className="h-6 w-px bg-gray-700" />
+        <div className="h-6 w-px theme-border-primary" />
 
         {/* AI Features */}
         <button
@@ -623,14 +632,14 @@ export default function EditorPage({ onNoteUpdate }) {
         {/* View Options */}
         <button
           onClick={() => setIsA4(!isA4)}
-          className="p-2 hover:bg-[#37373d] rounded transition-colors"
+          className="p-2 theme-bg-hover rounded transition-colors"
           title="Toggle Width"
         >
           <Layout size={16} />
         </button>
         <button
-          onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-          className="p-2 hover:bg-[#37373d] rounded transition-colors"
+          onClick={toggleTheme}
+          className="p-2 theme-bg-hover rounded transition-colors"
           title="Toggle Theme"
         >
           {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
@@ -639,21 +648,21 @@ export default function EditorPage({ onNoteUpdate }) {
 
       <div className="flex flex-1 overflow-hidden">
         {/* Left Sidebar - Annotations & Connections */}
-        <div className={`w-80 border-r p-5 overflow-y-auto ${sidebarClass}`}>
+        <div className="w-80 border-r p-5 overflow-y-auto theme-bg-secondary theme-border-primary">
           {/* Connections */}
           <div className="mb-6">
-            <h3 className="font-semibold text-gray-400 text-xs uppercase tracking-wider mb-3 flex items-center gap-2">
+            <h3 className="font-semibold theme-text-secondary text-xs uppercase tracking-wider mb-3 flex items-center gap-2">
               <LinkIcon size={14} /> Connections
             </h3>
             
             {connections.outgoing.length > 0 && (
               <div className="mb-3">
-                <p className="text-xs text-gray-500 mb-2">Links to:</p>
+                <p className="text-xs theme-text-tertiary mb-2">Links to:</p>
                 {connections.outgoing.map(link => (
                   <div
                     key={link.id}
                     onClick={() => navigate(`/note/${link.target.id}`)}
-                    className="mb-2 p-2.5 bg-[#2a2d2e] border border-[#3d3d3d] rounded-md cursor-pointer hover:border-blue-500 hover:bg-[#2d3139] transition-colors text-sm"
+                    className="mb-2 p-2.5 theme-bg-tertiary border theme-border-primary rounded-md cursor-pointer hover:border-blue-500 theme-bg-hover transition-colors text-sm"
                   >
                     → {link.target.title}
                   </div>
@@ -663,12 +672,12 @@ export default function EditorPage({ onNoteUpdate }) {
 
             {connections.incoming.length > 0 && (
               <div>
-                <p className="text-xs text-gray-500 mb-2">Linked from:</p>
+                <p className="text-xs theme-text-tertiary mb-2">Linked from:</p>
                 {connections.incoming.map(link => (
                   <div
                     key={link.id}
                     onClick={() => navigate(`/note/${link.source.id}`)}
-                    className="mb-2 p-2.5 bg-[#2a2d2e] border border-[#3d3d3d] rounded-md cursor-pointer hover:border-purple-500 hover:bg-[#2d3139] transition-colors text-sm"
+                    className="mb-2 p-2.5 theme-bg-tertiary border theme-border-primary rounded-md cursor-pointer hover:border-purple-500 theme-bg-hover transition-colors text-sm"
                   >
                     ← {link.source.title}
                   </div>
@@ -677,13 +686,13 @@ export default function EditorPage({ onNoteUpdate }) {
             )}
 
             {connections.incoming.length === 0 && connections.outgoing.length === 0 && (
-              <p className="text-sm text-gray-500 italic">No connections yet</p>
+              <p className="text-sm theme-text-tertiary italic">No connections yet</p>
             )}
           </div>
 
           {/* Annotations */}
           <div>
-            <h3 className="font-semibold text-gray-400 text-xs uppercase tracking-wider mb-3 flex items-center gap-2">
+            <h3 className="font-semibold theme-text-secondary text-xs uppercase tracking-wider mb-3 flex items-center gap-2">
               <MessageSquare size={14} /> Annotations
             </h3>
             
@@ -701,7 +710,7 @@ export default function EditorPage({ onNoteUpdate }) {
                   </button>
                 </div>
                 <textarea
-                  className="w-full text-sm bg-transparent focus:outline-none resize-none text-gray-300"
+                  className="w-full text-sm bg-transparent focus:outline-none resize-none theme-text-primary"
                   placeholder="Add your comment..."
                   defaultValue={ann.comment || ''}
                   onChange={(e) => updateAnnotation(ann, e.target.value)}
@@ -711,7 +720,7 @@ export default function EditorPage({ onNoteUpdate }) {
             ))}
 
             {annotations.length === 0 && (
-              <p className="text-sm text-gray-500 italic">
+              <p className="text-sm theme-text-tertiary italic">
                 Select text and click Annotate
               </p>
             )}
@@ -721,7 +730,7 @@ export default function EditorPage({ onNoteUpdate }) {
         {/* Main Editor */}
         <div className="flex-1 overflow-y-auto flex justify-center pt-8 pb-20 relative">
           <div
-            className={`relative ${isA4 ? 'w-[21cm]' : 'w-full max-w-4xl'} ${paperClass} shadow-sm p-16 rounded-lg`}
+            className={`relative ${isA4 ? 'w-[21cm]' : 'w-full max-w-4xl'} theme-bg-secondary theme-text-primary shadow-sm p-16 rounded-lg`}
             style={{ minHeight: isA4 ? '29.7cm' : '800px' }}
           >
             <EditorContent
@@ -734,15 +743,15 @@ export default function EditorPage({ onNoteUpdate }) {
 
       {/* Linker Suggestions Panel */}
       {showLinker && (
-        <div className="absolute top-20 right-8 w-80 bg-[#252526] rounded-lg shadow-xl border border-[#3d3d3d] p-4 z-50">
+        <div className="absolute top-20 right-8 w-80 theme-bg-secondary rounded-lg shadow-xl border theme-border-primary p-4 z-50">
           <div className="flex justify-between items-center mb-3">
-            <h4 className="text-base font-semibold text-gray-200 flex items-center gap-2">
+            <h4 className="text-base font-semibold theme-text-primary flex items-center gap-2">
               <Sparkles size={16} className="text-blue-500" />
               Related Notes
             </h4>
             <button
               onClick={() => setShowLinker(false)}
-              className="text-gray-500 hover:text-gray-300"
+              className="theme-text-tertiary hover:theme-text-primary"
             >
               <X size={18} />
             </button>
@@ -756,7 +765,7 @@ export default function EditorPage({ onNoteUpdate }) {
                   onClick={() => createLink(s.id)}
                   className="p-3 bg-blue-900 bg-opacity-20 hover:bg-opacity-30 rounded-md cursor-pointer transition-colors border border-blue-700 border-opacity-30"
                 >
-                  <div className="font-medium text-gray-200 text-sm mb-1">
+                  <div className="font-medium theme-text-primary text-sm mb-1">
                     {s.title}
                   </div>
                   <div className="text-xs text-blue-400">
@@ -767,8 +776,8 @@ export default function EditorPage({ onNoteUpdate }) {
             </div>
           ) : (
             <div className="text-center py-6">
-              <p className="text-gray-400 text-sm">No similar notes found</p>
-              <p className="text-xs text-gray-600 mt-1">Try selecting different text</p>
+              <p className="theme-text-secondary text-sm">No similar notes found</p>
+              <p className="text-xs theme-text-tertiary mt-1">Try selecting different text</p>
             </div>
           )}
         </div>

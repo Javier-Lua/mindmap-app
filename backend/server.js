@@ -1050,3 +1050,114 @@ app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📊 Health check available at http://localhost:${PORT}/health`);
 });
+
+// Batch delete notes
+app.post('/api/notes/batch-delete', auth, async (req, res) => {
+  try {
+    const { noteIds } = req.body;
+    
+    if (!Array.isArray(noteIds) || noteIds.length === 0) {
+      return res.status(400).json({ error: 'noteIds array required' });
+    }
+    
+    // Verify all notes belong to user before deleting
+    const notes = await prisma.note.findMany({
+      where: { 
+        id: { in: noteIds },
+        userId: req.userId 
+      },
+      select: { id: true }
+    });
+    
+    if (notes.length !== noteIds.length) {
+      return res.status(403).json({ error: 'Cannot delete notes you do not own' });
+    }
+    
+    // Delete in transaction
+    await prisma.$transaction([
+      prisma.link.deleteMany({ 
+        where: { 
+          OR: [
+            { sourceId: { in: noteIds } },
+            { targetId: { in: noteIds } }
+          ]
+        }
+      }),
+      prisma.annotation.deleteMany({ where: { noteId: { in: noteIds } } }),
+      prisma.note.deleteMany({ where: { id: { in: noteIds } } })
+    ]);
+    
+    res.json({ deleted: noteIds.length });
+  } catch (error) {
+    console.error('Batch delete error:', error);
+    res.status(500).json({ error: 'Failed to delete notes' });
+  }
+});
+
+// Delete ALL user notes (use with extreme caution)
+app.delete('/api/notes/all', auth, async (req, res) => {
+  try {
+    const { confirm } = req.query;
+    
+    if (confirm !== 'DELETE_ALL') {
+      return res.status(400).json({ 
+        error: 'Must confirm deletion with ?confirm=DELETE_ALL' 
+      });
+    }
+    
+    // Get all note IDs first
+    const notes = await prisma.note.findMany({
+      where: { userId: req.userId },
+      select: { id: true }
+    });
+    
+    const noteIds = notes.map(n => n.id);
+    
+    if (noteIds.length === 0) {
+      return res.json({ deleted: 0 });
+    }
+    
+    // Delete everything
+    await prisma.$transaction([
+      prisma.link.deleteMany({ 
+        where: { source: { userId: req.userId } }
+      }),
+      prisma.annotation.deleteMany({ 
+        where: { note: { userId: req.userId } }
+      }),
+      prisma.note.deleteMany({ 
+        where: { userId: req.userId }
+      })
+    ]);
+    
+    res.json({ deleted: noteIds.length });
+  } catch (error) {
+    console.error('Delete all error:', error);
+    res.status(500).json({ error: 'Failed to delete all notes' });
+  }
+});
+
+// Token refresh endpoint
+app.post('/api/refresh-token', auth, async (req, res) => {
+  try {
+    // User already authenticated via middleware
+    const newToken = jsonwebtoken.sign(
+      { userId: req.userId }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: '7d' }
+    );
+    
+    res.cookie('token', newToken, { 
+      httpOnly: true,
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/'
+    });
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Token refresh failed:', error);
+    res.status(500).json({ error: 'Failed to refresh token' });
+  }
+});
