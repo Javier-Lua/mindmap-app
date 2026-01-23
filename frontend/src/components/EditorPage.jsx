@@ -19,10 +19,8 @@ import {
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
-// Debounce utility
 function useDebounce(callback, delay) {
   const timeoutRef = useRef(null);
-
   return useCallback((...args) => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
@@ -54,16 +52,15 @@ export default function EditorPage({ onNoteUpdate }) {
   const [isCreatingNote, setIsCreatingNote] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   
-  // Refs to track state and prevent race conditions
+  // Critical refs for preventing race conditions
   const isSavingRef = useRef(false);
+  const currentNoteIdRef = useRef(null);
+  const activeLoadRef = useRef(null); // Track active load promise
+  const editorUpdateRef = useRef(false); // Flag to prevent update loops
   const cloudSaveIntervalRef = useRef(null);
   const lastChangeTimeRef = useRef(Date.now());
-  const loadAbortControllerRef = useRef(null);
-  const currentNoteIdRef = useRef(null);
-  const isLoadingRef = useRef(false);
-  const editorInitializedRef = useRef(false);
 
-  // Initialize editor ONCE - don't recreate on every render
+  // Initialize editor ONCE
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -80,8 +77,11 @@ export default function EditorPage({ onNoteUpdate }) {
       },
     },
     onUpdate: ({ editor }) => {
-      // Don't save if still loading or no note loaded yet
-      if (!note?.id || isLoadingRef.current) return;
+      // Ignore updates that we triggered programmatically
+      if (editorUpdateRef.current) return;
+      
+      // Don't save if no note loaded yet
+      if (!note?.id || loading) return;
       
       const json = editor.getJSON();
       const text = editor.getText();
@@ -98,9 +98,9 @@ export default function EditorPage({ onNoteUpdate }) {
       saveToLocalStorage(updatedNote);
       setHasUnsavedChanges(true);
       
-      // Check for large changes (>100 characters changed)
+      // Smart cloud save on large changes
       const timeSinceLastChange = Date.now() - lastChangeTimeRef.current;
-      if (timeSinceLastChange > 5000) { // 5 seconds since last change
+      if (timeSinceLastChange > 5000) {
         const charDiff = Math.abs((text?.length || 0) - (note.rawText?.length || 0));
         if (charDiff > 100) {
           saveToCloud();
@@ -113,27 +113,29 @@ export default function EditorPage({ onNoteUpdate }) {
       const text = editor.state.doc.textBetween(from, to, ' ');
       setSelectedText(text);
     }
-  }, []); // Empty deps - create editor only once
+  }, []);
 
-  // Load note when ID changes
+  // Load note when ID changes - with proper cleanup
   useEffect(() => {
-    // Cancel any pending load
-    if (loadAbortControllerRef.current) {
-      loadAbortControllerRef.current.abort();
-    }
-
-    // Don't load if ID hasn't actually changed
-    if (currentNoteIdRef.current === id) {
+    // If ID hasn't changed, don't reload
+    if (currentNoteIdRef.current === id && note?.id === id) {
       return;
     }
 
-    currentNoteIdRef.current = id;
-    loadOrCreateNote();
+    // Cancel any pending load
+    if (activeLoadRef.current) {
+      activeLoadRef.current.cancelled = true;
+    }
 
-    // Cleanup function
+    currentNoteIdRef.current = id;
+    const loadPromise = { cancelled: false };
+    activeLoadRef.current = loadPromise;
+
+    loadOrCreateNote(loadPromise);
+
     return () => {
-      if (loadAbortControllerRef.current) {
-        loadAbortControllerRef.current.abort();
+      if (activeLoadRef.current === loadPromise) {
+        loadPromise.cancelled = true;
       }
     };
   }, [id]);
@@ -141,30 +143,32 @@ export default function EditorPage({ onNoteUpdate }) {
   // Auto-save to cloud every 1 minute
   useEffect(() => {
     cloudSaveIntervalRef.current = setInterval(() => {
-      if (hasUnsavedChanges && !isLoadingRef.current) {
+      if (hasUnsavedChanges && !loading && note?.id) {
         saveToCloud();
       }
-    }, 60000); // 1 minute
+    }, 60000);
 
     return () => {
       if (cloudSaveIntervalRef.current) {
         clearInterval(cloudSaveIntervalRef.current);
       }
     };
-  }, [hasUnsavedChanges]);
+  }, [hasUnsavedChanges, loading, note?.id]);
 
   // Manual save with Ctrl+S / Cmd+S
   useEffect(() => {
     const handleKeyDown = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
-        saveToCloud();
+        if (note?.id) {
+          saveToCloud();
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [note]);
+  }, [note?.id]);
 
   const saveToLocalStorage = (noteData) => {
     if (!noteData?.id) return;
@@ -182,98 +186,70 @@ export default function EditorPage({ onNoteUpdate }) {
     }
   };
 
-  const loadOrCreateNote = async () => {
-    // Prevent multiple simultaneous loads
-    if (isLoadingRef.current) {
-      return;
-    }
-
-    isLoadingRef.current = true;
+  const loadOrCreateNote = async (loadPromise) => {
     setLoading(true);
     setSaveError(null);
 
-    // Create new abort controller for this request
-    loadAbortControllerRef.current = new AbortController();
-
     try {
       if (!id || id === 'new') {
-        await createNewNote();
+        await createNewNote(loadPromise);
         return;
       }
 
-      // Try localStorage first for instant load
-      const localData = localStorage.getItem(`note_${id}`);
-      if (localData) {
-        try {
-          const parsed = JSON.parse(localData);
-          setNote(parsed);
-          setAnnotations(parsed.annotations || []);
-          setConnections({
-            incoming: parsed.incoming || [],
-            outgoing: parsed.outgoing || []
-          });
-          setLastLocalSave(new Date(parsed.lastLocalSave));
-          
-          // Update editor content immediately
-          if (editor && !editor.isDestroyed) {
-            editor.commands.setContent(parsed.content || '');
-            editorInitializedRef.current = true;
-          }
-          
-          setLoading(false);
-        } catch (e) {
-          console.error('Failed to parse localStorage:', e);
-        }
-      }
-
-      // Then load from server in background
+      // Load from server
       const res = await axios.get(`${API}/api/notes/${id}`, { 
         withCredentials: true,
-        signal: loadAbortControllerRef.current.signal,
         timeout: 10000
       });
 
-      // Only update if we're still on the same note
-      if (currentNoteIdRef.current === id) {
-        setNote(res.data);
-        setAnnotations(res.data.annotations || []);
-        setConnections({
-          incoming: res.data.incoming || [],
-          outgoing: res.data.outgoing || []
-        });
-        setLastSaved(new Date());
-        
-        // Update editor with server data
-        if (editor && !editor.isDestroyed && res.data.content) {
-          editor.commands.setContent(res.data.content);
-          editorInitializedRef.current = true;
-        }
-        
-        // Update localStorage with server data
-        saveToLocalStorage(res.data);
+      // Check if this load was cancelled
+      if (loadPromise.cancelled || currentNoteIdRef.current !== id) {
+        console.log('Load cancelled for note', id);
+        return;
       }
+
+      // Update state
+      setNote(res.data);
+      setAnnotations(res.data.annotations || []);
+      setConnections({
+        incoming: res.data.incoming || [],
+        outgoing: res.data.outgoing || []
+      });
+      setLastSaved(new Date());
+      setHasUnsavedChanges(false);
+      
+      // Update editor content - set flag to prevent triggering onUpdate
+      if (editor && !editor.isDestroyed) {
+        editorUpdateRef.current = true;
+        editor.commands.setContent(res.data.content || '');
+        // Reset flag after a tick
+        setTimeout(() => {
+          editorUpdateRef.current = false;
+        }, 0);
+      }
+      
+      // Save to localStorage
+      saveToLocalStorage(res.data);
     } catch (error) {
-      // Ignore aborted requests
-      if (error.name === 'AbortError' || error.name === 'CanceledError') {
+      // Check if cancelled
+      if (loadPromise.cancelled || currentNoteIdRef.current !== id) {
         return;
       }
 
       console.error('Failed to load note:', error);
       
-      // Only create new note if we don't have local data and still on same note
-      if (!localData && currentNoteIdRef.current === id) {
-        await createNewNote();
+      // Only create new note if we're still on 'new' or the same ID
+      if (id === 'new' || currentNoteIdRef.current === id) {
+        await createNewNote(loadPromise);
       }
     } finally {
-      if (currentNoteIdRef.current === id) {
+      if (!loadPromise.cancelled && currentNoteIdRef.current === id) {
         setLoading(false);
-        isLoadingRef.current = false;
       }
     }
   };
 
-  const createNewNote = async () => {
-    // Prevent duplicate creation
+  const createNewNote = async (loadPromise) => {
     if (isCreatingNote) return;
     
     setIsCreatingNote(true);
@@ -285,27 +261,34 @@ export default function EditorPage({ onNoteUpdate }) {
         timeout: 10000
       });
       
-      // Only update if we're still trying to create a new note
-      if (currentNoteIdRef.current === 'new' || currentNoteIdRef.current === id) {
-        setNote(res.data);
-        setAnnotations([]);
-        setConnections({ incoming: [], outgoing: [] });
-        setLastSaved(new Date());
-        saveToLocalStorage(res.data);
-        
-        // Update editor
-        if (editor && !editor.isDestroyed) {
-          editor.commands.setContent('');
-          editorInitializedRef.current = true;
-        }
-        
-        // Update URL without triggering reload
-        navigate(`/note/${res.data.id}`, { replace: true });
-        currentNoteIdRef.current = res.data.id;
-        
-        if (onNoteUpdate) {
-          onNoteUpdate();
-        }
+      // Check if cancelled
+      if (loadPromise?.cancelled) {
+        return;
+      }
+      
+      const newNote = res.data;
+      setNote(newNote);
+      setAnnotations([]);
+      setConnections({ incoming: [], outgoing: [] });
+      setLastSaved(new Date());
+      setHasUnsavedChanges(false);
+      saveToLocalStorage(newNote);
+      
+      // Update editor
+      if (editor && !editor.isDestroyed) {
+        editorUpdateRef.current = true;
+        editor.commands.setContent('');
+        setTimeout(() => {
+          editorUpdateRef.current = false;
+        }, 0);
+      }
+      
+      // Update URL without triggering reload
+      navigate(`/note/${newNote.id}`, { replace: true });
+      currentNoteIdRef.current = newNote.id;
+      
+      if (onNoteUpdate) {
+        onNoteUpdate();
       }
     } catch (error) {
       console.error('Failed to create note:', error);
@@ -313,12 +296,11 @@ export default function EditorPage({ onNoteUpdate }) {
     } finally {
       setLoading(false);
       setIsCreatingNote(false);
-      isLoadingRef.current = false;
     }
   };
 
   const saveToCloud = async () => {
-    if (!note?.id || isSavingRef.current || isLoadingRef.current) return;
+    if (!note?.id || isSavingRef.current || loading) return;
 
     isSavingRef.current = true;
     setSaving(true);
@@ -407,8 +389,10 @@ export default function EditorPage({ onNoteUpdate }) {
       await axios.delete(`${API}/api/annotations/${annId}`, { withCredentials: true });
     } catch (error) {
       console.error('Failed to delete annotation:', error);
-      const res = await axios.get(`${API}/api/notes/${note.id}`, { withCredentials: true });
-      setAnnotations(res.data.annotations || []);
+      if (note?.id) {
+        const res = await axios.get(`${API}/api/notes/${note.id}`, { withCredentials: true });
+        setAnnotations(res.data.annotations || []);
+      }
     }
   };
 

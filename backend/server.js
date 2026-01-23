@@ -683,27 +683,44 @@ app.post('/api/cluster', auth, async (req, res) => {
   try {
     const { preview } = req.body;
     
+    // Get notes with embeddings
     const notes = await prisma.$queryRaw`
       SELECT id, title, x, y, embedding::text as embedding_text
       FROM "Note"
-      WHERE "userId" = ${req.userId} AND embedding IS NOT NULL AND archived IS NOT TRUE
+      WHERE "userId" = ${req.userId} 
+        AND embedding IS NOT NULL 
+        AND archived IS NOT TRUE
+        AND "rawText" IS NOT NULL
+        AND LENGTH("rawText") > 20
     `;
     
     if (notes.length < 3) {
-      return res.json({ message: 'Not enough notes to cluster', clusters: [] });
+      return res.json({ 
+        message: 'Not enough notes to cluster. You need at least 3 notes with text content (more than 20 characters each).', 
+        clusters: [] 
+      });
     }
     
+    // Parse embeddings from PostgreSQL vector format
     const embeddings = notes.map(n => {
       const vectorStr = n.embedding_text.replace(/[\[\]]/g, '');
       return vectorStr.split(',').map(parseFloat);
     });
     
-    const numClusters = Math.min(5, Math.floor(embeddings.length / 2));
+    // Determine number of clusters (2-5 clusters, max half the notes)
+    const numClusters = Math.min(5, Math.max(2, Math.floor(notes.length / 2)));
     
-    // FIXED: Changed initialization from 'kmeans++' to 'mostDistant'
-    // ml-kmeans supports: 'random', 'mostDistant', or 'kmeans' (not 'kmeans++')
-    const result = kmeans(embeddings, numClusters, { initialization: 'mostDistant' });
+    console.log(`Clustering ${notes.length} notes into ${numClusters} clusters`);
     
+    // Run k-means clustering with proper options
+    // ml-kmeans API: kmeans(data, k, options)
+    const result = kmeans(embeddings, numClusters, {
+      initialization: 'kmeans++', // Changed from 'mostDistant' to 'kmeans++'
+      maxIterations: 100,
+      tolerance: 1e-4
+    });
+    
+    // Group notes by cluster
     const clusters = {};
     result.clusters.forEach((clusterIdx, i) => {
       if (!clusters[clusterIdx]) clusters[clusterIdx] = [];
@@ -715,6 +732,8 @@ app.post('/api/cluster', auth, async (req, res) => {
       });
     });
     
+    // Create cluster data with colors and positions
+    const clusterColors = ['#FEE2E2', '#DBEAFE', '#E0E7FF', '#FCE7F3', '#FEF3C7'];
     const clusterData = Object.entries(clusters).map(([idx, noteList]) => {
       const centerX = noteList.reduce((sum, n) => sum + n.x, 0) / noteList.length;
       const centerY = noteList.reduce((sum, n) => sum + n.y, 0) / noteList.length;
@@ -725,15 +744,18 @@ app.post('/api/cluster', auth, async (req, res) => {
         notes: noteList,
         centerX,
         centerY,
-        color: ['#FEE2E2', '#DBEAFE', '#E0E7FF', '#FCE7F3', '#FEF3C7'][parseInt(idx) % 5]
+        color: clusterColors[parseInt(idx) % clusterColors.length]
       };
     });
     
+    // If not preview, actually update note positions
     if (!preview) {
       for (const cluster of clusterData) {
-        const radius = Math.min(150, cluster.notes.length * 30);
+        // Calculate radius based on number of notes
+        const radius = Math.min(200, cluster.notes.length * 35);
         const angleStep = (2 * Math.PI) / cluster.notes.length;
         
+        // Position notes in a circle around cluster center
         for (let i = 0; i < cluster.notes.length; i++) {
           const angle = i * angleStep;
           const newX = cluster.centerX + radius * Math.cos(angle);
@@ -741,16 +763,32 @@ app.post('/api/cluster', auth, async (req, res) => {
           
           await prisma.note.update({
             where: { id: cluster.notes[i].id },
-            data: { x: newX, y: newY }
+            data: { 
+              x: newX, 
+              y: newY,
+              // Mark as non-ephemeral since we're organizing them
+              ephemeral: false
+            }
           });
         }
       }
     }
     
-    res.json({ clusters: clusterData, preview });
+    res.json({ 
+      clusters: clusterData, 
+      preview,
+      stats: {
+        totalNotes: notes.length,
+        numClusters: clusterData.length,
+        averageClusterSize: Math.round(notes.length / clusterData.length)
+      }
+    });
   } catch (error) {
     console.error('Clustering error:', error);
-    res.status(500).json({ error: 'Clustering failed: ' + error.message });
+    res.status(500).json({ 
+      error: 'Clustering failed: ' + error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 

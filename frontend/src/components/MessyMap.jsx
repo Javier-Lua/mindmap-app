@@ -46,6 +46,7 @@ export default function MessyMap() {
   const [clusters, setClusters] = useState([]);
   const [showClusters, setShowClusters] = useState(false);
   const [clusterPreview, setClusterPreview] = useState(null);
+  const [isClustering, setIsClustering] = useState(false);
   const [orphans, setOrphans] = useState([]);
   const [showOrphans, setShowOrphans] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -106,6 +107,8 @@ export default function MessyMap() {
         setConnectingFrom(null);
         setMultiSelect(new Set());
         setEditingNode(null);
+        setShowClusters(false);
+        setClusterPreview(null);
       } else if (e.key === 'Enter' && editingNode && !e.shiftKey) {
         e.preventDefault();
         saveInlineEdit();
@@ -131,7 +134,6 @@ export default function MessyMap() {
   }, [historyIndex]);
 
   const loadData = async (isInitialLoad = false) => {
-    // Prevent multiple simultaneous loads
     const now = Date.now();
     if (now - lastLoadTimeRef.current < 500) {
       console.log('Skipping duplicate load request');
@@ -159,7 +161,6 @@ export default function MessyMap() {
       });
       
       if (res.data && res.data.nodes) {
-        // Only update if we're not in the middle of a drag operation
         if (!draggingNode) {
           setNodes(res.data.nodes);
           setEdges(res.data.edges || []);
@@ -207,11 +208,13 @@ export default function MessyMap() {
   };
 
   const runClustering = async (preview = true) => {
+    setIsClustering(true);
     try {
       const res = await axios.post(`${API}/api/cluster`, { preview }, { 
         withCredentials: true,
         timeout: 20000
       });
+      
       if (res.data.clusters && res.data.clusters.length > 0) {
         setClusters(res.data.clusters);
         if (preview) {
@@ -220,15 +223,21 @@ export default function MessyMap() {
         } else {
           setClusterPreview(null);
           setShowClusters(false);
-          loadData(false);
+          await loadData(false);
         }
       } else {
-        alert('Not enough notes with content to cluster. Try adding more notes with text.');
+        alert('Not enough notes with content to cluster. Add at least 3 notes with text content.');
       }
     } catch (error) {
       console.error('Clustering failed:', error);
-      alert('Clustering failed. Please try again.');
+      alert('Clustering failed: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setIsClustering(false);
     }
+  };
+
+  const applyClustering = async () => {
+    await runClustering(false);
   };
 
   const createNote = async (x, y, ephemeral = true) => {
@@ -245,7 +254,6 @@ export default function MessyMap() {
         timeout: 10000
       });
       
-      // Optimistic update
       const newNodes = [...nodes, res.data];
       setNodes(newNodes);
       saveToHistory(newNodes);
@@ -265,7 +273,6 @@ export default function MessyMap() {
       });
     } catch (error) {
       console.error('Failed to update node position:', error);
-      // Revert on error
       loadData(false);
     }
   };
@@ -285,7 +292,6 @@ export default function MessyMap() {
     try {
       const title = editingText.split('\n')[0].slice(0, 50) || 'Untitled';
       
-      // Optimistic update
       setNodes(prevNodes => prevNodes.map(n => 
         n.id === editingNode 
           ? { ...n, rawText: editingText, title } 
@@ -313,7 +319,6 @@ export default function MessyMap() {
     if (!confirm('Delete this note?')) return;
     
     try {
-      // Optimistic update
       const newNodes = nodes.filter(n => n.id !== nodeId);
       setNodes(newNodes);
       setEdges(edges.filter(e => e.sourceId !== nodeId && e.targetId !== nodeId));
@@ -334,7 +339,6 @@ export default function MessyMap() {
     try {
       const node = nodes.find(n => n.id === nodeId);
       
-      // Optimistic update
       const newNodes = nodes.map(n => 
         n.id === nodeId ? { ...n, archived: !n.archived } : n
       );
@@ -357,7 +361,6 @@ export default function MessyMap() {
     try {
       const node = nodes.find(n => n.id === nodeId);
       
-      // Optimistic update
       const newNodes = nodes.map(n => 
         n.id === nodeId ? { ...n, sticky: !n.sticky, ephemeral: n.sticky } : n
       );
@@ -459,7 +462,6 @@ export default function MessyMap() {
       const snapX = showGrid ? Math.round(x / 50) * 50 : x;
       const snapY = showGrid ? Math.round(y / 50) * 50 : y;
       
-      // Don't trigger history during drag
       setNodes(prevNodes => prevNodes.map(n => 
         n.id === draggingNode.id ? { ...n, x: snapX, y: snapY } : n
       ));
@@ -566,11 +568,12 @@ export default function MessyMap() {
 
             <button
               onClick={() => runClustering(true)}
-              className="flex items-center gap-1 px-2 py-1 hover:bg-opacity-10 hover:bg-white rounded-md transition-colors text-xs"
-              title="Smart Tidy"
+              disabled={isClustering || nodes.length < 3}
+              className="flex items-center gap-1 px-3 py-1.5 hover:bg-opacity-10 hover:bg-white rounded-md transition-colors text-xs disabled:opacity-50"
+              title="Smart Tidy - Organize notes into clusters"
             >
               <Brain size={14} />
-              Tidy
+              {isClustering ? 'Tidying...' : 'Tidy'}
             </button>
 
             {refreshing && (
@@ -616,6 +619,76 @@ export default function MessyMap() {
           </div>
         </div>
       </div>
+
+      {/* Cluster Preview Panel */}
+      {showClusters && clusterPreview && (
+        <div className="absolute top-16 right-4 z-30 w-80 bg-[#252526] rounded-lg shadow-xl border border-[#3d3d3d] p-4 max-h-[80vh] overflow-y-auto">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-gray-100 flex items-center gap-2">
+              <Sparkles size={16} className="text-purple-400" />
+              Cluster Preview
+            </h3>
+            <button
+              onClick={() => {
+                setShowClusters(false);
+                setClusterPreview(null);
+              }}
+              className="text-gray-500 hover:text-gray-300"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <p className="text-xs text-gray-400 mb-4">
+            Found {clusterPreview.length} clusters. Apply to reorganize your notes.
+          </p>
+
+          <div className="space-y-3 mb-4">
+            {clusterPreview.map((cluster, idx) => (
+              <div
+                key={cluster.id}
+                className="p-3 rounded-lg border border-[#3d3d3d]"
+                style={{ backgroundColor: cluster.color }}
+              >
+                <div className="font-medium text-gray-900 mb-2 text-sm">
+                  {cluster.name} ({cluster.notes.length} notes)
+                </div>
+                <div className="space-y-1">
+                  {cluster.notes.slice(0, 3).map(note => (
+                    <div key={note.id} className="text-xs text-gray-700 truncate">
+                      • {note.title}
+                    </div>
+                  ))}
+                  {cluster.notes.length > 3 && (
+                    <div className="text-xs text-gray-600 italic">
+                      +{cluster.notes.length - 3} more...
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={applyClustering}
+              disabled={isClustering}
+              className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium disabled:opacity-50"
+            >
+              {isClustering ? 'Applying...' : 'Apply'}
+            </button>
+            <button
+              onClick={() => {
+                setShowClusters(false);
+                setClusterPreview(null);
+              }}
+              className="px-3 py-2 bg-[#3d3d3d] text-gray-300 rounded-lg hover:bg-[#4d4d4d] text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Grid Background */}
       {showGrid && (
@@ -684,6 +757,36 @@ export default function MessyMap() {
             })}
           </g>
         </svg>
+
+        {/* Cluster Visualization (if preview active) */}
+        {clusterPreview && (
+          <svg
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              width: '100%',
+              height: '100%',
+              top: 0,
+              left: 0,
+              zIndex: 0
+            }}
+          >
+            <g transform={`translate(${panOffset.x}, ${panOffset.y}) scale(${zoom})`}>
+              {clusterPreview.map(cluster => (
+                <circle
+                  key={cluster.id}
+                  cx={cluster.centerX}
+                  cy={cluster.centerY}
+                  r={Math.min(200, cluster.notes.length * 40)}
+                  fill={cluster.color}
+                  opacity={0.1}
+                  stroke={cluster.color}
+                  strokeWidth={2}
+                  strokeDasharray="5,5"
+                />
+              ))}
+            </g>
+          </svg>
+        )}
 
         {/* Nodes */}
         {nodes.map(node => {
