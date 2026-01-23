@@ -339,6 +339,67 @@ app.post('/api/notes', auth, async (req, res) => {
   }
 });
 
+// DELETE ALL notes - MUST come BEFORE /api/notes/:id
+app.delete('/api/notes/all', auth, async (req, res) => {
+  try {
+    const { confirm } = req.query;
+    
+    if (confirm !== 'DELETE_ALL') {
+      return res.status(400).json({ 
+        error: 'Must confirm deletion with ?confirm=DELETE_ALL' 
+      });
+    }
+    
+    console.log(`Starting delete all for user ${req.userId}`);
+    
+    // Count notes first
+    const noteCount = await prisma.note.count({
+      where: { userId: req.userId }
+    });
+    
+    if (noteCount === 0) {
+      return res.json({ deleted: 0 });
+    }
+    
+    console.log(`Found ${noteCount} notes to delete`);
+    
+    // Delete in steps to avoid issues
+    try {
+      // Step 1: Clear cluster associations
+      console.log('Step 1: Clearing cluster associations...');
+      await prisma.$executeRaw`
+        DELETE FROM "_NoteClusters" 
+        WHERE "B" IN (
+          SELECT id FROM "Note" WHERE "userId" = ${req.userId}
+        )
+      `;
+      console.log('Cluster associations cleared');
+      
+      // Step 2: Delete notes (CASCADE handles links and annotations)
+      console.log('Step 2: Deleting notes...');
+      const result = await prisma.note.deleteMany({
+        where: { userId: req.userId }
+      });
+      console.log(`Deleted ${result.count} notes`);
+      
+      res.json({ deleted: result.count });
+    } catch (deleteError) {
+      console.error('Error during deletion:', deleteError);
+      throw deleteError;
+    }
+  } catch (error) {
+    console.error('Delete all error:', error);
+    console.error('Error name:', error.name);
+    console.error('Error code:', error.code);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      error: 'Failed to delete all notes: ' + error.message,
+      code: error.code,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
 app.put('/api/notes/:id', auth, async (req, res) => {
   try {
     const { content, plainText, title, messyMode, x, y, color, ephemeral, sticky, priority, archived } = req.body;
@@ -1091,65 +1152,6 @@ app.post('/api/notes/batch-delete', auth, async (req, res) => {
   } catch (error) {
     console.error('Batch delete error:', error);
     res.status(500).json({ error: 'Failed to delete notes' });
-  }
-});
-
-// Delete ALL user notes (use with extreme caution)
-app.delete('/api/notes/all', auth, async (req, res) => {
-  try {
-    const { confirm } = req.query;
-    
-    if (confirm !== 'DELETE_ALL') {
-      return res.status(400).json({ 
-        error: 'Must confirm deletion with ?confirm=DELETE_ALL' 
-      });
-    }
-    
-    // FIXED: Get all note IDs first, then delete properly
-    const notes = await prisma.note.findMany({
-      where: { userId: req.userId },
-      select: { id: true }
-    });
-    
-    const noteIds = notes.map(n => n.id);
-    
-    if (noteIds.length === 0) {
-      return res.json({ deleted: 0 });
-    }
-    
-    console.log(`Deleting ${noteIds.length} notes for user ${req.userId}`);
-    
-    // Delete everything in correct order using note IDs
-    await prisma.$transaction([
-      // Delete links that reference these notes
-      prisma.link.deleteMany({ 
-        where: { 
-          OR: [
-            { sourceId: { in: noteIds } },
-            { targetId: { in: noteIds } }
-          ]
-        }
-      }),
-      // Delete annotations for these notes
-      prisma.annotation.deleteMany({ 
-        where: { noteId: { in: noteIds } }
-      }),
-      // Delete cluster associations
-      prisma.$executeRaw`DELETE FROM "_NoteClusters" WHERE "B" IN (${prisma.join(noteIds)})`,
-      // Finally delete the notes
-      prisma.note.deleteMany({ 
-        where: { userId: req.userId }
-      })
-    ]);
-    
-    console.log(`Successfully deleted ${noteIds.length} notes`);
-    res.json({ deleted: noteIds.length });
-  } catch (error) {
-    console.error('Delete all error:', error);
-    res.status(500).json({ 
-      error: 'Failed to delete all notes: ' + error.message,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
   }
 });
 
