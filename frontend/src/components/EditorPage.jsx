@@ -35,7 +35,7 @@ function useDebounce(callback, delay) {
 export default function EditorPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { getNote, updateNoteLocal, updateNote, createNote } = useNotes();
+  const { getNote, updateNoteLocal, updateNote } = useNotes();
   
   const [note, setNote] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -54,7 +54,6 @@ export default function EditorPage() {
   const [fontFamily, setFontFamily] = useState('Inter');
   const [selectedText, setSelectedText] = useState('');
   const [connections, setConnections] = useState({ incoming: [], outgoing: [] });
-  const [isCreatingNote, setIsCreatingNote] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   
   const isSavingRef = useRef(false);
@@ -125,12 +124,12 @@ export default function EditorPage() {
   }, []);
 
   useEffect(() => {
-    if (currentNoteIdRef.current === id && note?.id === id) {
+    if (!id || currentNoteIdRef.current === id) {
       return;
     }
 
     currentNoteIdRef.current = id;
-    loadOrCreateNote();
+    loadNote();
   }, [id]);
 
   useEffect(() => {
@@ -177,16 +176,11 @@ export default function EditorPage() {
     }
   };
 
-  const loadOrCreateNote = async () => {
+  const loadNote = async () => {
     setLoading(true);
     setSaveError(null);
 
     try {
-      if (!id || id === 'new') {
-        await createNewNote();
-        return;
-      }
-
       const res = await axios.get(`${API}/api/notes/${id}`, { 
         withCredentials: true,
         timeout: 10000
@@ -224,7 +218,7 @@ export default function EditorPage() {
       if (error.response?.status === 404) {
         setSaveError('Note not found');
         setTimeout(() => {
-          navigate('/note/new', { replace: true });
+          navigate('/', { replace: true });
         }, 1000);
       } else {
         setSaveError('Failed to load note. Please try again.');
@@ -233,39 +227,6 @@ export default function EditorPage() {
       if (currentNoteIdRef.current === id) {
         setLoading(false);
       }
-    }
-  };
-
-  const createNewNote = async () => {
-    if (isCreatingNote) return;
-    
-    setIsCreatingNote(true);
-    try {
-      const newNote = await createNote({ ephemeral: true });
-      
-      setNote(newNote);
-      setAnnotations([]);
-      setConnections({ incoming: [], outgoing: [] });
-      setLastSaved(new Date());
-      setHasUnsavedChanges(false);
-      saveToLocalStorage(newNote);
-      
-      if (editor && !editor.isDestroyed) {
-        editorUpdateRef.current = true;
-        editor.commands.setContent('');
-        setTimeout(() => {
-          editorUpdateRef.current = false;
-        }, 0);
-      }
-      
-      navigate(`/note/${newNote.id}`, { replace: true });
-      currentNoteIdRef.current = newNote.id;
-    } catch (error) {
-      console.error('Failed to create note:', error);
-      setSaveError('Failed to create note');
-    } finally {
-      setLoading(false);
-      setIsCreatingNote(false);
     }
   };
 
@@ -395,7 +356,7 @@ export default function EditorPage() {
           <X className="text-red-500 mx-auto mb-4" size={48} />
           <p className="text-theme-primary text-lg mb-2">Note not found</p>
           <p className="text-theme-secondary mb-4">This note may have been deleted</p>
-          <p className="text-sm text-theme-tertiary">Redirecting to new note...</p>
+          <p className="text-sm text-theme-tertiary">Redirecting...</p>
         </div>
       </div>
     );

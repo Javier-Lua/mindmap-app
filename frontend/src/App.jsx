@@ -169,7 +169,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout }) {
     await deleteNote(noteId);
     
     if (currentNoteId === noteId) {
-      navigate('/note/new');
+      navigate('/');
     }
   };
 
@@ -521,8 +521,36 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout }) {
   );
 }
 
+function EmptyState({ onNewNote }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center theme-bg-primary">
+      <div className="text-center max-w-md mx-4">
+        <div className="w-24 h-24 mx-auto mb-6 bg-gradient-to-br from-purple-500 to-blue-500 rounded-full flex items-center justify-center">
+          <FileText size={48} className="text-white" />
+        </div>
+        <h1 className="text-3xl font-bold theme-text-primary mb-3">
+          Start Your Messy Thinking
+        </h1>
+        <p className="text-theme-secondary mb-8">
+          Create your first note and let your ideas flow freely. We'll help you organize them later.
+        </p>
+        <button
+          onClick={onNewNote}
+          className="px-8 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:shadow-lg transition-all duration-200 font-medium text-lg"
+        >
+          <Plus size={20} className="inline mr-2" />
+          Create First Note
+        </button>
+        <p className="mt-6 text-sm text-theme-tertiary">
+          Or press <kbd className="px-2 py-1 bg-theme-tertiary rounded shadow-sm border border-theme-primary font-mono text-xs">Ctrl+K</kbd> for quick capture
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function MainLayout({ user }) {
-  const { createNote } = useNotes();
+  const { notes, createNote } = useNotes();
   const [showQuickCapture, setShowQuickCapture] = useState(false);
   const [currentNoteId, setCurrentNoteId] = useState(null);
   const [isCreatingNote, setIsCreatingNote] = useState(false);
@@ -533,6 +561,8 @@ function MainLayout({ user }) {
   useEffect(() => {
     if (params.id) {
       setCurrentNoteId(params.id);
+    } else {
+      setCurrentNoteId(null);
     }
   }, [params.id]);
 
@@ -617,12 +647,21 @@ function MainLayout({ user }) {
         )}
         
         <Routes>
-          <Route path="/" element={<Navigate to="/note/new" replace />} />
+          <Route 
+            path="/" 
+            element={
+              notes.length === 0 ? (
+                <EmptyState onNewNote={handleNewNote} />
+              ) : (
+                <Navigate to={`/note/${notes[0].id}`} replace />
+              )
+            } 
+          />
           <Route path="/note/:id" element={<EditorPage />} />
           <Route path="/dashboard" element={<Dashboard user={user} />} />
           <Route path="/mindmap" element={<MessyMap />} />
           <Route path="/mindmap/:folderId" element={<MessyMap />} />
-          <Route path="*" element={<Navigate to="/note/new" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
 
