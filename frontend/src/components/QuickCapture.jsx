@@ -13,6 +13,7 @@ export default function QuickCapture({ onClose }) {
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
   const recognitionRef = useRef(null);
+  const hasSubmittedRef = useRef(false);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -88,32 +89,47 @@ export default function QuickCapture({ onClose }) {
 
   const handleSubmit = async (e) => {
     e?.preventDefault();
-    if (isSaving) return;
-    if (!text.trim() && !file) return;
+    
+    // Prevent double submission
+    if (isSaving || hasSubmittedRef.current) {
+      console.log('Already saving or submitted, ignoring...');
+      return;
+    }
+    
+    if (!text.trim() && !file) {
+      console.log('No content to save');
+      return;
+    }
 
+    hasSubmittedRef.current = true;
     setIsSaving(true);
 
     try {
       const title = text.split('\n')[0].slice(0, 50) || 'Quick thought';
       
       await createNote({
+        title,
+        rawText: text,
         content: {
           type: 'doc',
           content: [
             {
               type: 'paragraph',
-              content: [{ type: 'text', text }]
+              content: text ? [{ type: 'text', text }] : []
             }
           ]
         },
-        rawText: text,
-        title,
-        ephemeral: true
+        ephemeral: true,
+        x: Math.random() * 500,
+        y: Math.random() * 500
       });
 
+      // Close after successful save
       onClose();
     } catch (error) {
       console.error('Failed to save quick capture:', error);
+      alert('Failed to save note. Please try again.');
+      hasSubmittedRef.current = false;
       setIsSaving(false);
     }
   };
@@ -133,6 +149,11 @@ export default function QuickCapture({ onClose }) {
     }
   };
 
+  const handleClose = () => {
+    if (isSaving) return; // Prevent closing while saving
+    onClose();
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 flex items-start justify-center pt-20 z-50 animate-fadeIn">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden transform animate-slideDown">
@@ -148,8 +169,9 @@ export default function QuickCapture({ onClose }) {
               </div>
             </div>
             <button
-              onClick={onClose}
-              className="p-2 hover:bg-white hover:bg-opacity-20 rounded-lg transition-colors"
+              onClick={handleClose}
+              disabled={isSaving}
+              className="p-2 hover:bg-white hover:bg-opacity-20 rounded-lg transition-colors disabled:opacity-50"
             >
               <X size={20} />
             </button>
@@ -158,9 +180,10 @@ export default function QuickCapture({ onClose }) {
           <div className="flex gap-2">
             <button
               onClick={() => setMode('text')}
+              disabled={isSaving}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 mode === 'text' ? 'bg-white text-purple-600' : 'bg-white bg-opacity-20 hover:bg-opacity-30'
-              }`}
+              } disabled:opacity-50`}
             >
               <Type size={14} />
               Text
@@ -170,18 +193,20 @@ export default function QuickCapture({ onClose }) {
                 setMode('image');
                 fileInputRef.current?.click();
               }}
+              disabled={isSaving}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 mode === 'image' ? 'bg-white text-purple-600' : 'bg-white bg-opacity-20 hover:bg-opacity-30'
-              }`}
+              } disabled:opacity-50`}
             >
               <Image size={14} />
               Image
             </button>
             <button
               onClick={() => fileInputRef.current?.click()}
+              disabled={isSaving}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 mode === 'link' ? 'bg-white text-purple-600' : 'bg-white bg-opacity-20 hover:bg-opacity-30'
-              }`}
+              } disabled:opacity-50`}
             >
               <Paperclip size={14} />
               File
@@ -204,7 +229,8 @@ export default function QuickCapture({ onClose }) {
                   setPreviewUrl(null);
                   setMode('text');
                 }}
-                className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600"
+                disabled={isSaving}
+                className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600 disabled:opacity-50"
               >
                 <X size={14} />
               </button>
@@ -235,11 +261,12 @@ export default function QuickCapture({ onClose }) {
               <button
                 type="button"
                 onClick={toggleSpeechRecognition}
+                disabled={isSaving}
                 className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm font-medium ${
                   isRecording
                     ? 'bg-red-100 text-red-600 border-2 border-red-300'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
+                } disabled:opacity-50`}
               >
                 {isRecording ? <MicOff size={16} /> : <Mic size={16} />}
                 <span>{isRecording ? 'Stop Dictation' : 'Dictate'}</span>
@@ -251,7 +278,8 @@ export default function QuickCapture({ onClose }) {
                   const timestamp = new Date().toLocaleString();
                   setText(prev => prev + `\n\n---\n${timestamp}`);
                 }}
-                className="px-3 py-2 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg text-sm font-medium"
+                disabled={isSaving}
+                className="px-3 py-2 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg text-sm font-medium disabled:opacity-50"
               >
                 Add Timestamp
               </button>
@@ -260,7 +288,7 @@ export default function QuickCapture({ onClose }) {
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={onClose}
+                onClick={handleClose}
                 className="px-5 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium text-sm"
                 disabled={isSaving}
               >

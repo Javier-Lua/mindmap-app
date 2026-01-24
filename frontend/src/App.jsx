@@ -584,14 +584,15 @@ function MainLayout({ user }) {
         e.preventDefault();
         setShowQuickCapture(true);
       }
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && showQuickCapture) {
+        e.preventDefault();
         setShowQuickCapture(false);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [showQuickCapture]);
 
   const handleNewNote = useCallback(async () => {
     if (isCreatingNote) return;

@@ -187,8 +187,12 @@ export const NotesProvider = ({ children }) => {
   }, [loadNotes]);
 
   const deleteAllNotes = useCallback(async () => {
-    const previousNotes = notes;
-    setNotes([]);
+    // Use functional update to get current notes
+    let previousNotes = [];
+    setNotes(prev => {
+      previousNotes = prev;
+      return [];
+    });
 
     try {
       await axios.delete(`${API}/api/notes/all?confirm=DELETE_ALL`, {
@@ -204,7 +208,7 @@ export const NotesProvider = ({ children }) => {
       setNotes(previousNotes);
       throw error;
     }
-  }, [notes]);
+  }, []);
 
   const createFolder = useCallback(async (name) => {
     try {
