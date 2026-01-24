@@ -131,7 +131,7 @@ if (!interceptorConfigured) {
 }
 
 function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout }) {
-  const { notes, folders, loadNotes, loadFolders, createFolder, updateFolder, deleteFolder, deleteNote } = useNotes();
+  const { notes, folders, loadNotes, loadFolders, createFolder, updateFolder, deleteFolder, deleteNote, lastSync } = useNotes();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSection, setActiveSection] = useState('recent');
   const [expandedFolders, setExpandedFolders] = useState(new Set());
@@ -143,8 +143,17 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout }) {
   const navigate = useNavigate();
 
   useEffect(() => {
-    loadNotes(true);
-    loadFolders();
+    // Only reload if data is stale (older than 5 seconds) or not loaded
+    const now = Date.now();
+    const isStale = !lastSync || (now - lastSync) > 5000;
+    
+    if (isStale || notes.length === 0) {
+      loadNotes(true);
+    }
+    
+    if (folders.length === 0) {
+      loadFolders();
+    }
 
     const interval = setInterval(() => {
       if (!window.isLoggingOut) {
@@ -154,7 +163,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout }) {
     }, 30000);
     
     return () => clearInterval(interval);
-  }, [loadNotes, loadFolders]);
+  }, [loadNotes, loadFolders, lastSync, notes.length, folders.length]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);

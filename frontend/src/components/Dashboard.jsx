@@ -14,7 +14,8 @@ export default function Dashboard({ user }) {
     updateFolder, 
     deleteFolder, 
     deleteNote, 
-    deleteAllNotes 
+    deleteAllNotes,
+    lastSync 
   } = useNotes();
   
   const [newFolderName, setNewFolderName] = useState('');
@@ -24,9 +25,19 @@ export default function Dashboard({ user }) {
   const [isDeletingAll, setIsDeletingAll] = useState(false);
 
   useEffect(() => {
-    loadNotes(true);
-    loadFolders();
-  }, [loadNotes, loadFolders]);
+    // Only reload if data is stale (older than 5 seconds) or not loaded
+    const now = Date.now();
+    const isStale = !lastSync || (now - lastSync) > 5000;
+    
+    if (isStale || notes.length === 0) {
+      loadNotes(true);
+    }
+    
+    // Always load folders if empty
+    if (folders.length === 0) {
+      loadFolders();
+    }
+  }, [loadNotes, loadFolders, lastSync, notes.length, folders.length]);
 
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;

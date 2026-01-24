@@ -95,15 +95,38 @@ export const NotesProvider = ({ children }) => {
   }, []);
 
   const updateNote = useCallback(async (noteId, updates) => {
+    // Optimistically update local state first
     updateNoteLocal(noteId, updates);
 
     try {
-      await axios.put(`${API}/api/notes/${noteId}`, updates, {
+      // Get the updated note from server
+      const res = await axios.put(`${API}/api/notes/${noteId}`, updates, {
         withCredentials: true,
         timeout: 10000
       });
+
+      // Update with server response to ensure consistency
+      setNotes(prev => {
+        const index = prev.findIndex(n => n.id === noteId);
+        if (index === -1) return prev;
+
+        const updated = [...prev];
+        updated[index] = res.data;
+
+        // Move to front if title was updated
+        if (updates.title) {
+          const [note] = updated.splice(index, 1);
+          updated.unshift(note);
+        }
+
+        return updated;
+      });
+
+      // Update last sync time to prevent unnecessary reloads
+      setLastSync(Date.now());
     } catch (error) {
       console.error('Failed to update note:', error);
+      // On error, reload to get correct state
       await loadNotes(false);
     }
   }, [updateNoteLocal, loadNotes]);
@@ -132,6 +155,10 @@ export const NotesProvider = ({ children }) => {
       });
 
       setNotes(prev => prev.map(n => n.id === tempId ? res.data : n));
+      
+      // Update last sync time
+      setLastSync(Date.now());
+      
       return res.data;
     } catch (error) {
       console.error('Failed to create note:', error);
@@ -141,6 +168,7 @@ export const NotesProvider = ({ children }) => {
   }, []);
 
   const deleteNote = useCallback(async (noteId) => {
+    // Optimistically remove from local state
     setNotes(prev => prev.filter(n => n.id !== noteId));
 
     try {
@@ -148,13 +176,18 @@ export const NotesProvider = ({ children }) => {
         withCredentials: true,
         timeout: 10000
       });
+      
+      // Update last sync time
+      setLastSync(Date.now());
     } catch (error) {
       console.error('Failed to delete note:', error);
+      // On error, reload to get correct state
       await loadNotes(false);
     }
   }, [loadNotes]);
 
   const deleteAllNotes = useCallback(async () => {
+    const previousNotes = notes;
     setNotes([]);
 
     try {
@@ -162,12 +195,16 @@ export const NotesProvider = ({ children }) => {
         withCredentials: true,
         timeout: 30000
       });
+      
+      // Update last sync time
+      setLastSync(Date.now());
     } catch (error) {
       console.error('Failed to delete all notes:', error);
-      await loadNotes(false);
+      // Restore previous notes on error
+      setNotes(previousNotes);
       throw error;
     }
-  }, [loadNotes]);
+  }, [notes]);
 
   const createFolder = useCallback(async (name) => {
     try {
@@ -184,6 +221,7 @@ export const NotesProvider = ({ children }) => {
   }, []);
 
   const updateFolder = useCallback(async (folderId, updates) => {
+    // Optimistically update
     setFolders(prev => prev.map(f => f.id === folderId ? { ...f, ...updates } : f));
 
     try {
@@ -198,6 +236,7 @@ export const NotesProvider = ({ children }) => {
   }, [loadFolders]);
 
   const deleteFolder = useCallback(async (folderId) => {
+    // Optimistically remove
     setFolders(prev => prev.filter(f => f.id !== folderId));
 
     try {
@@ -205,6 +244,7 @@ export const NotesProvider = ({ children }) => {
         withCredentials: true,
         timeout: 10000
       });
+      // Reload notes as they may have moved to root
       await loadNotes(false);
     } catch (error) {
       console.error('Failed to delete folder:', error);
