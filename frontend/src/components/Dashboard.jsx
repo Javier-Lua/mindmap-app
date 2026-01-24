@@ -25,16 +25,17 @@ export default function Dashboard({ user }) {
   const [isDeletingAll, setIsDeletingAll] = useState(false);
 
   useEffect(() => {
-    // Only reload if data is stale (older than 5 seconds) or not loaded
+    // Only reload if data is stale (older than 5 seconds)
     const now = Date.now();
     const isStale = !lastSync || (now - lastSync) > 5000;
     
-    if (isStale || notes.length === 0) {
+    // Only load if stale AND we haven't loaded yet
+    // Don't reload just because notes/folders are empty (user might have deleted all)
+    if (isStale && notes.length === 0 && !lastSync) {
       loadNotes(true);
     }
     
-    // Always load folders if empty
-    if (folders.length === 0) {
+    if (isStale && folders.length === 0 && !lastSync) {
       loadFolders();
     }
   }, [loadNotes, loadFolders, lastSync, notes.length, folders.length]);

@@ -30,6 +30,7 @@ const processQueue = (error, token = null) => {
   window.failedQueue = [];
 };
 
+// Configure axios interceptors ONCE
 let interceptorConfigured = false;
 if (!interceptorConfigured) {
   interceptorConfigured = true;
@@ -65,7 +66,7 @@ if (!interceptorConfigured) {
       if (error.response?.status === 401 && !originalRequest._retry) {
         if (originalRequest.url?.includes('/api/me') || 
             originalRequest.url?.includes('/refresh-token')) {
-          window.location.href = '/';
+          // Don't redirect on /api/me failures - let the component handle it
           return Promise.reject(error);
         }
         
@@ -143,15 +144,17 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout }) {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Only reload if data is stale (older than 5 seconds) or not loaded
+    // Only reload if data is stale (older than 5 seconds)
     const now = Date.now();
     const isStale = !lastSync || (now - lastSync) > 5000;
     
-    if (isStale || notes.length === 0) {
+    // Only load if stale AND we don't have any data yet
+    // Don't reload just because notes are empty (user might have deleted all)
+    if (isStale && notes.length === 0 && !lastSync) {
       loadNotes(true);
     }
     
-    if (folders.length === 0) {
+    if (folders.length === 0 && !lastSync) {
       loadFolders();
     }
 
@@ -688,7 +691,10 @@ export default function App() {
   const [theme, setTheme] = useState(() => {
     return localStorage.getItem('theme') || 'dark';
   });
-  const hasCheckedAuth = useRef(false);
+  
+  // Use a ref to track if we're currently checking auth
+  const isCheckingAuth = useRef(false);
+  const hasInitialized = useRef(false);
 
   useEffect(() => {
     if (!authenticated) return;
@@ -714,29 +720,62 @@ export default function App() {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
+  // Single auth check on mount
   useEffect(() => {
-    if (!hasCheckedAuth.current) {
-      hasCheckedAuth.current = true;
+    if (hasInitialized.current) return;
+    hasInitialized.current = true;
+    
+    // Small delay to ensure cookies are set after OAuth redirect
+    setTimeout(() => {
       checkAuth();
-    }
+    }, 100);
   }, []);
 
   const checkAuth = async () => {
+    // Prevent concurrent auth checks
+    if (isCheckingAuth.current) {
+      return;
+    }
+    
     if (window.isLoggingOut) {
       setAuthenticated(false);
       return;
     }
+    
+    isCheckingAuth.current = true;
     
     try {
       const res = await axios.get(`${API}/api/me`, { 
         withCredentials: true,
         timeout: 10000
       });
+      
       setAuthenticated(true);
       setUser(res.data);
       setAuthError(null);
       window.isLoggingOut = false;
     } catch (error) {
+      // If this is the first check after potential OAuth redirect, retry once
+      if (!hasInitialized.current && error.response?.status === 401) {
+        console.log('Auth check failed, retrying once...');
+        try {
+          await new Promise(resolve => setTimeout(resolve, 500));
+          const retryRes = await axios.get(`${API}/api/me`, { 
+            withCredentials: true,
+            timeout: 10000
+          });
+          
+          setAuthenticated(true);
+          setUser(retryRes.data);
+          setAuthError(null);
+          window.isLoggingOut = false;
+          isCheckingAuth.current = false;
+          return;
+        } catch (retryError) {
+          console.error('Auth retry failed:', retryError);
+        }
+      }
+      
       setAuthenticated(false);
       setUser(null);
       
@@ -746,6 +785,8 @@ export default function App() {
       } else {
         setAuthError(null);
       }
+    } finally {
+      isCheckingAuth.current = false;
     }
   };
 
