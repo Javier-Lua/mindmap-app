@@ -16,6 +16,7 @@ import {
   List, ListOrdered, Code, Quote, Undo, Redo, Type,
   AlignLeft, AlignCenter, AlignRight, Cloud, HardDrive
 } from 'lucide-react';
+import { useNotes } from '../contexts/NotesContext';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -31,9 +32,11 @@ function useDebounce(callback, delay) {
   }, [callback, delay]);
 }
 
-export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
+export default function EditorPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { getNote, updateNoteLocal, updateNote, createNote } = useNotes();
+  
   const [note, setNote] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -54,11 +57,9 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
   const [isCreatingNote, setIsCreatingNote] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   
-  // Critical refs for preventing race conditions
   const isSavingRef = useRef(false);
   const currentNoteIdRef = useRef(null);
-  const activeLoadRef = useRef(null); // Track active load promise
-  const editorUpdateRef = useRef(false); // Flag to prevent update loops
+  const editorUpdateRef = useRef(false);
   const cloudSaveIntervalRef = useRef(null);
   const lastChangeTimeRef = useRef(Date.now());
 
@@ -69,7 +70,6 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
     localStorage.setItem('theme', newTheme);
   };
 
-  // Initialize editor ONCE
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -86,32 +86,27 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
       },
     },
     onUpdate: ({ editor }) => {
-      if (editorUpdateRef.current) return;
-      if (!note?.id || loading) return;
+      if (editorUpdateRef.current || !note?.id || loading) return;
       
       const json = editor.getJSON();
       const text = editor.getText();
       const title = text.split('\n')[0].slice(0, 50) || 'Untitled Thought';
       
-      const updatedNote = {
-        ...note,
+      updateNoteLocal(note.id, {
         title,
         content: json,
         rawText: text
-      };
+      });
       
-      setNote(updatedNote);
-      saveToLocalStorage(updatedNote);
+      setNote(prev => ({
+        ...prev,
+        title,
+        content: json,
+        rawText: text
+      }));
+      
+      saveToLocalStorage({ ...note, title, content: json, rawText: text });
       setHasUnsavedChanges(true);
-      
-      // NEW: Notify sidebar of title change
-      if (onLiveUpdate) {
-        onLiveUpdate(note.id, {
-          title,
-          rawText: text,
-          updatedAt: new Date().toISOString()
-        });
-      }
       
       const timeSinceLastChange = Date.now() - lastChangeTimeRef.current;
       if (timeSinceLastChange > 5000) {
@@ -129,32 +124,15 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
     }
   }, []);
 
-  // Load note when ID changes - with proper cleanup
   useEffect(() => {
-    // If ID hasn't changed, don't reload
     if (currentNoteIdRef.current === id && note?.id === id) {
       return;
     }
 
-    // Cancel any pending load
-    if (activeLoadRef.current) {
-      activeLoadRef.current.cancelled = true;
-    }
-
     currentNoteIdRef.current = id;
-    const loadPromise = { cancelled: false };
-    activeLoadRef.current = loadPromise;
-
-    loadOrCreateNote(loadPromise);
-
-    return () => {
-      if (activeLoadRef.current === loadPromise) {
-        loadPromise.cancelled = true;
-      }
-    };
+    loadOrCreateNote();
   }, [id]);
 
-  // Auto-save to cloud every 1 minute
   useEffect(() => {
     cloudSaveIntervalRef.current = setInterval(() => {
       if (hasUnsavedChanges && !loading && note?.id) {
@@ -169,7 +147,6 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
     };
   }, [hasUnsavedChanges, loading, note?.id]);
 
-  // Manual save with Ctrl+S / Cmd+S
   useEffect(() => {
     const handleKeyDown = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -200,29 +177,25 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
     }
   };
 
-  const loadOrCreateNote = async (loadPromise) => {
+  const loadOrCreateNote = async () => {
     setLoading(true);
     setSaveError(null);
 
     try {
       if (!id || id === 'new') {
-        await createNewNote(loadPromise);
+        await createNewNote();
         return;
       }
 
-      // Load from server
       const res = await axios.get(`${API}/api/notes/${id}`, { 
         withCredentials: true,
         timeout: 10000
       });
 
-      // Check if this load was cancelled
-      if (loadPromise.cancelled || currentNoteIdRef.current !== id) {
-        console.log('Load cancelled for note', id);
+      if (currentNoteIdRef.current !== id) {
         return;
       }
 
-      // Update state
       setNote(res.data);
       setAnnotations(res.data.annotations || []);
       setConnections({
@@ -232,61 +205,44 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
       setLastSaved(new Date());
       setHasUnsavedChanges(false);
       
-      // Update editor content - set flag to prevent triggering onUpdate
       if (editor && !editor.isDestroyed) {
         editorUpdateRef.current = true;
         editor.commands.setContent(res.data.content || '');
-        // Reset flag after a tick
         setTimeout(() => {
           editorUpdateRef.current = false;
         }, 0);
       }
       
-      // Save to localStorage
       saveToLocalStorage(res.data);
     } catch (error) {
-      // Check if cancelled
-      if (loadPromise.cancelled || currentNoteIdRef.current !== id) {
+      if (currentNoteIdRef.current !== id) {
         return;
       }
 
       console.error('Failed to load note:', error);
       
-      // If note doesn't exist (404), navigate to new note instead of creating
       if (error.response?.status === 404) {
         setSaveError('Note not found');
         setTimeout(() => {
           navigate('/note/new', { replace: true });
         }, 1000);
       } else {
-        // For other errors, show error message
         setSaveError('Failed to load note. Please try again.');
       }
     } finally {
-      if (!loadPromise.cancelled && currentNoteIdRef.current === id) {
+      if (currentNoteIdRef.current === id) {
         setLoading(false);
       }
     }
   };
 
-  const createNewNote = async (loadPromise) => {
+  const createNewNote = async () => {
     if (isCreatingNote) return;
     
     setIsCreatingNote(true);
     try {
-      const res = await axios.post(`${API}/api/notes`, {
-        ephemeral: true
-      }, { 
-        withCredentials: true,
-        timeout: 10000
-      });
+      const newNote = await createNote({ ephemeral: true });
       
-      // Check if cancelled
-      if (loadPromise?.cancelled) {
-        return;
-      }
-      
-      const newNote = res.data;
       setNote(newNote);
       setAnnotations([]);
       setConnections({ incoming: [], outgoing: [] });
@@ -294,7 +250,6 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
       setHasUnsavedChanges(false);
       saveToLocalStorage(newNote);
       
-      // Update editor
       if (editor && !editor.isDestroyed) {
         editorUpdateRef.current = true;
         editor.commands.setContent('');
@@ -303,13 +258,8 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
         }, 0);
       }
       
-      // Update URL without triggering reload
       navigate(`/note/${newNote.id}`, { replace: true });
       currentNoteIdRef.current = newNote.id;
-      
-      if (onNoteUpdate) {
-        onNoteUpdate();
-      }
     } catch (error) {
       console.error('Failed to create note:', error);
       setSaveError('Failed to create note');
@@ -331,25 +281,16 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
       const currentText = editor?.getText();
       const title = currentText?.split('\n')[0].slice(0, 50) || 'Untitled Thought';
 
-      const response = await axios.put(`${API}/api/notes/${note.id}`, {
+      await updateNote(note.id, {
         content: currentContent,
         plainText: currentText,
         title,
         messyMode: true
-      }, { 
-        withCredentials: true,
-        timeout: 10000
       });
 
-      if (response.status === 200) {
-        setLastSaved(new Date());
-        setHasUnsavedChanges(false);
-        setSaveError(null);
-        
-        if (onNoteUpdate) {
-          onNoteUpdate();
-        }
-      }
+      setLastSaved(new Date());
+      setHasUnsavedChanges(false);
+      setSaveError(null);
     } catch (error) {
       console.error('Cloud save failed:', error);
       if (error.response?.status === 401) {
@@ -447,7 +388,6 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
     );
   }
 
-  // Show error state if note not found
   if (saveError === 'Note not found') {
     return (
       <div className="min-h-screen flex items-center justify-center theme-bg-primary">
@@ -463,9 +403,7 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
 
   return (
     <div className="flex h-screen theme-bg-primary theme-text-primary overflow-hidden flex-col">
-      {/* Static Toolbar */}
       <div className="toolbar-themed p-3 flex items-center gap-2 flex-wrap">
-        {/* Save Status */}
         <div className="flex items-center gap-2 mr-4">
           {saving && (
             <div className="flex items-center gap-2 text-blue-400">
@@ -505,7 +443,6 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
 
         <div className="h-6 w-px border-theme-primary" />
 
-        {/* Undo/Redo */}
         <button
           onClick={() => editor?.chain().focus().undo().run()}
           disabled={!editor?.can().undo()}
@@ -525,7 +462,6 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
 
         <div className="h-6 w-px border-theme-primary" />
 
-        {/* Font Selection */}
         <select
           value={fontFamily}
           onChange={(e) => {
@@ -543,7 +479,6 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
           <option value="Comic Sans MS">Comic Sans</option>
         </select>
 
-        {/* Font Size */}
         <select
           onChange={(e) => setFontSize(parseInt(e.target.value))}
           value={fontSize}
@@ -561,7 +496,6 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
 
         <div className="h-6 w-px border-theme-primary" />
 
-        {/* Formatting */}
         <button
           onClick={() => editor?.chain().focus().toggleBold().run()}
           className={`p-2 theme-bg-hover rounded transition-colors text-theme-secondary ${editor?.isActive('bold') ? 'bg-theme-tertiary' : ''}`}
@@ -584,7 +518,6 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
           <Highlighter size={16} />
         </button>
 
-        {/* Text Color */}
         <input
           type="color"
           onInput={(e) => editor?.chain().focus().setColor(e.target.value).run()}
@@ -594,7 +527,6 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
 
         <div className="h-6 w-px border-theme-primary" />
 
-        {/* Lists */}
         <button
           onClick={() => editor?.chain().focus().toggleBulletList().run()}
           className={`p-2 theme-bg-hover rounded transition-colors text-theme-secondary ${editor?.isActive('bulletList') ? 'bg-theme-tertiary' : ''}`}
@@ -626,7 +558,6 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
 
         <div className="h-6 w-px border-theme-primary" />
 
-        {/* AI Features */}
         <button
           onClick={runLinker}
           disabled={!selectedText.trim()}
@@ -649,7 +580,6 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
 
         <div className="flex-1" />
 
-        {/* View Options */}
         <button
           onClick={() => setIsA4(!isA4)}
           className="p-2 theme-bg-hover rounded transition-colors text-theme-secondary"
@@ -667,9 +597,7 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left Sidebar - Annotations & Connections */}
         <div className="w-80 border-r p-5 overflow-y-auto sidebar-themed">
-          {/* Connections */}
           <div className="mb-6">
             <h3 className="font-semibold text-theme-secondary text-xs uppercase tracking-wider mb-3 flex items-center gap-2">
               <LinkIcon size={14} /> Connections
@@ -710,7 +638,6 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
             )}
           </div>
 
-          {/* Annotations */}
           <div>
             <h3 className="font-semibold text-theme-secondary text-xs uppercase tracking-wider mb-3 flex items-center gap-2">
               <MessageSquare size={14} /> Annotations
@@ -747,7 +674,6 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
           </div>
         </div>
 
-        {/* Main Editor */}
         <div className="flex-1 overflow-y-auto flex justify-center pt-8 pb-20 relative">
           <div
             className={`relative ${isA4 ? 'w-[21cm]' : 'w-full max-w-4xl'} bg-theme-card theme-text-primary theme-shadow-sm p-16 rounded-lg`}
@@ -761,7 +687,6 @@ export default function EditorPage({ onNoteUpdate, onLiveUpdate }) {
         </div>
       </div>
 
-      {/* Linker Suggestions Panel */}
       {showLinker && (
         <div className="absolute top-20 right-8 w-80 modal-themed rounded-lg shadow-xl p-4 z-50">
           <div className="flex justify-between items-center mb-3">

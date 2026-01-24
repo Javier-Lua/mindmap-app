@@ -7,22 +7,22 @@ import {
   LayoutList, Network, CircleDot, RotateCcw, RotateCw,
   Archive, Star, Sparkles, Link2, Zap, Check, Loader, RefreshCw
 } from 'lucide-react';
+import { useNotes } from '../contexts/NotesContext';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 export default function MessyMap() {
   const navigate = useNavigate();
   const { folderId } = useParams();
+  const { notes, createNote: contextCreateNote, updateNote, deleteNote: contextDeleteNote } = useNotes();
   const canvasRef = useRef(null);
   
-  // Core state
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   
-  // UI state
   const [searchQuery, setSearchQuery] = useState('');
   const [focusedNode, setFocusedNode] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
@@ -34,7 +34,6 @@ export default function MessyMap() {
   const [zoom, setZoom] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   
-  // Interaction state
   const [draggingNode, setDraggingNode] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -44,7 +43,6 @@ export default function MessyMap() {
   const [connectingFrom, setConnectingFrom] = useState(null);
   const [multiSelect, setMultiSelect] = useState(new Set());
   
-  // Feature state
   const [clusters, setClusters] = useState([]);
   const [showClusters, setShowClusters] = useState(false);
   const [clusterPreview, setClusterPreview] = useState(null);
@@ -54,19 +52,15 @@ export default function MessyMap() {
   const [showArchived, setShowArchived] = useState(false);
   const [messyMode, setMessyMode] = useState(true);
   
-  // Inline editing
   const [editingNode, setEditingNode] = useState(null);
   const [editingText, setEditingText] = useState('');
   
-  // History for undo/redo
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   
-  // Prevent state updates during operations
   const isUpdatingRef = useRef(false);
   const lastLoadTimeRef = useRef(0);
 
-  // Initial load
   useEffect(() => {
     loadData(true);
     loadRediscover();
@@ -75,7 +69,6 @@ export default function MessyMap() {
     return () => clearInterval(archiveInterval);
   }, [folderId, showArchived]);
 
-  // Prevent body scroll
   useEffect(() => {
     document.body.style.overflow = 'hidden';
     document.body.style.position = 'fixed';
@@ -90,7 +83,6 @@ export default function MessyMap() {
     };
   }, []);
 
-  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
@@ -102,7 +94,7 @@ export default function MessyMap() {
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selectedNode && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
           e.preventDefault();
-          deleteNode(selectedNode.id);
+          handleDeleteNode(selectedNode.id);
         }
       } else if (e.key === 'Escape') {
         setSelectedNode(null);
@@ -138,7 +130,6 @@ export default function MessyMap() {
   const loadData = async (isInitialLoad = false) => {
     const now = Date.now();
     if (now - lastLoadTimeRef.current < 500) {
-      console.log('Skipping duplicate load request');
       return;
     }
     lastLoadTimeRef.current = now;
@@ -201,7 +192,6 @@ export default function MessyMap() {
         timeout: 10000
       });
       if (res.data.archivedCount > 0) {
-        console.log(`Auto-archived ${res.data.archivedCount} ephemeral notes`);
         loadData(false);
       }
     } catch (error) {
@@ -242,21 +232,18 @@ export default function MessyMap() {
     await runClustering(false);
   };
 
-  const createNote = async (x, y, ephemeral = true) => {
+  const createNoteOnCanvas = async (x, y, ephemeral = true) => {
     if (isUpdatingRef.current) return;
     
     try {
-      const res = await axios.post(`${API}/api/notes`, { 
+      const newNote = await contextCreateNote({ 
         x: (x - panOffset.x) / zoom, 
         y: (y - panOffset.y) / zoom,
         folderId: folderId || null,
         ephemeral
-      }, { 
-        withCredentials: true,
-        timeout: 10000
       });
       
-      const newNodes = [...nodes, res.data];
+      const newNodes = [...nodes, newNote];
       setNodes(newNodes);
       saveToHistory(newNodes);
     } catch (error) {
@@ -269,10 +256,7 @@ export default function MessyMap() {
     if (isUpdatingRef.current) return;
     
     try {
-      await axios.put(`${API}/api/notes/${nodeId}`, { x, y }, { 
-        withCredentials: true,
-        timeout: 10000
-      });
+      await updateNote(nodeId, { x, y });
     } catch (error) {
       console.error('Failed to update node position:', error);
       loadData(false);
@@ -300,13 +284,10 @@ export default function MessyMap() {
           : n
       ));
       
-      await axios.put(`${API}/api/notes/${editingNode}`, {
+      await updateNote(editingNode, {
         plainText: editingText,
         title,
         messyMode: true
-      }, { 
-        withCredentials: true,
-        timeout: 10000
       });
       
       setEditingNode(null);
@@ -317,7 +298,7 @@ export default function MessyMap() {
     }
   };
 
-  const deleteNode = async (nodeId) => {
+  const handleDeleteNode = async (nodeId) => {
     if (!confirm('Delete this note?')) return;
     
     try {
@@ -326,10 +307,7 @@ export default function MessyMap() {
       setEdges(edges.filter(e => e.sourceId !== nodeId && e.targetId !== nodeId));
       saveToHistory(newNodes);
       
-      await axios.delete(`${API}/api/notes/${nodeId}`, { 
-        withCredentials: true,
-        timeout: 10000
-      });
+      await contextDeleteNote(nodeId);
     } catch (error) {
       console.error('Failed to delete note:', error);
       alert('Failed to delete note.');
@@ -347,12 +325,7 @@ export default function MessyMap() {
       setNodes(newNodes);
       saveToHistory(newNodes);
       
-      await axios.put(`${API}/api/notes/${nodeId}`, { 
-        archived: !node.archived 
-      }, { 
-        withCredentials: true,
-        timeout: 10000
-      });
+      await updateNote(nodeId, { archived: !node.archived });
     } catch (error) {
       console.error('Failed to toggle archive:', error);
       loadData(false);
@@ -369,12 +342,9 @@ export default function MessyMap() {
       setNodes(newNodes);
       saveToHistory(newNodes);
       
-      await axios.put(`${API}/api/notes/${nodeId}`, { 
+      await updateNote(nodeId, { 
         sticky: !node.sticky,
         ephemeral: node.sticky
-      }, { 
-        withCredentials: true,
-        timeout: 10000
       });
     } catch (error) {
       console.error('Failed to toggle sticky:', error);
@@ -498,7 +468,7 @@ export default function MessyMap() {
         const rect = canvasRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
-        createNote(x, y, messyMode);
+        createNoteOnCanvas(x, y, messyMode);
       }
     }
     setMouseDownPos(null);
@@ -549,7 +519,6 @@ export default function MessyMap() {
 
   return (
     <div className="relative w-screen h-screen theme-bg-primary overflow-hidden transition-colors duration-200">
-      {/* Top Toolbar */}
       <div className="absolute top-0 left-0 right-0 z-20 toolbar-themed shadow-sm">
         <div className="flex items-center justify-between px-4 py-2">
           <div className="flex items-center gap-2">
@@ -626,7 +595,6 @@ export default function MessyMap() {
         </div>
       </div>
 
-      {/* Cluster Preview Panel */}
       {showClusters && clusterPreview && (
         <div className="absolute top-16 right-4 z-30 w-80 modal-themed rounded-lg shadow-xl p-4 max-h-[80vh] overflow-y-auto">
           <div className="flex items-center justify-between mb-4">
@@ -696,7 +664,6 @@ export default function MessyMap() {
         </div>
       )}
 
-      {/* Grid Background */}
       {showGrid && (
         <svg className="absolute inset-0 pointer-events-none" style={{ zIndex: 1 }}>
           <defs>
@@ -708,7 +675,6 @@ export default function MessyMap() {
         </svg>
       )}
 
-      {/* Canvas */}
       <div
         ref={canvasRef}
         className="w-full h-full cursor-crosshair"
@@ -727,7 +693,6 @@ export default function MessyMap() {
         }}
         style={{ paddingTop: '48px' }}
       >
-        {/* SVG Layer for Edges */}
         <svg
           className="absolute inset-0 pointer-events-none"
           style={{
@@ -764,7 +729,6 @@ export default function MessyMap() {
           </g>
         </svg>
 
-        {/* Cluster Visualization (if preview active) */}
         {clusterPreview && (
           <svg
             className="absolute inset-0 pointer-events-none"
@@ -794,7 +758,6 @@ export default function MessyMap() {
           </svg>
         )}
 
-        {/* Nodes */}
         {nodes.map(node => {
           const isEditing = editingNode === node.id;
 
@@ -825,7 +788,6 @@ export default function MessyMap() {
                 }`}
                 style={{ width: '280px', minHeight: '120px' }}
               >
-                {/* Node Badges */}
                 <div className="absolute -top-2 -left-2 flex gap-1">
                   {node.sticky && (
                     <div className="p-1 bg-yellow-500 rounded-full shadow-sm">
@@ -876,7 +838,6 @@ export default function MessyMap() {
                   )}
                 </div>
 
-                {/* Node Actions */}
                 {!isEditing && (
                   <div className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
                     <button
@@ -899,7 +860,7 @@ export default function MessyMap() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        deleteNode(node.id);
+                        handleDeleteNode(node.id);
                       }}
                       className="p-1.5 bg-red-500 text-white rounded-md shadow-lg hover:bg-red-600"
                       title="Delete"
@@ -914,7 +875,6 @@ export default function MessyMap() {
         })}
       </div>
 
-      {/* Status Bar */}
       <div className="absolute bottom-2 left-2 z-20 bg-theme-card rounded-md shadow-sm px-3 py-1.5 border border-theme-primary flex items-center gap-3 text-xs text-theme-secondary">
         <span>{nodes.length} notes</span>
         <span>•</span>
@@ -923,7 +883,6 @@ export default function MessyMap() {
         <span className="text-green-500">{Math.round(zoom * 100)}%</span>
       </div>
 
-      {/* Helper Text */}
       {nodes.length === 0 && !loading && (
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none">
           <div className="modal-themed rounded-xl shadow-xl p-8">
@@ -935,4 +894,4 @@ export default function MessyMap() {
       )}
     </div>
   );
-}
+}   

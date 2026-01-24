@@ -7,20 +7,18 @@ import {
   LayoutGrid, Zap, RefreshCw, Loader, Trash2, Edit3, X, Check, FolderPlus
 } from 'lucide-react';
 
-// Import components
 import EditorPage from './components/EditorPage';
 import MessyMap from './components/MessyMap';
 import Dashboard from './components/Dashboard';
 import QuickCapture from './components/QuickCapture';
+import { NotesProvider, useNotes } from './contexts/NotesContext';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
-// Global flags
 window.isLoggingOut = false;
 window.isRefreshing = false;
 window.failedQueue = [];
 
-// Process queued requests after token refresh
 const processQueue = (error, token = null) => {
   window.failedQueue.forEach(prom => {
     if (error) {
@@ -32,30 +30,23 @@ const processQueue = (error, token = null) => {
   window.failedQueue = [];
 };
 
-// Configure axios interceptor ONCE
 let interceptorConfigured = false;
 if (!interceptorConfigured) {
   interceptorConfigured = true;
 
-  // Request interceptor - add retry flag
   axios.interceptors.request.use(
     config => {
-      // Don't add retry logic to refresh endpoint itself
       if (config.url?.includes('/refresh-token')) {
         return config;
       }
-      
-      // Add retry metadata
       config.metadata = { startTime: new Date() };
       return config;
     },
     error => Promise.reject(error)
   );
 
-  // Response interceptor - handle 401 errors globally
   axios.interceptors.response.use(
     response => {
-      // Log slow requests in dev
       if (process.env.NODE_ENV === 'development' && response.config.metadata) {
         const duration = new Date() - response.config.metadata.startTime;
         if (duration > 2000) {
@@ -67,24 +58,19 @@ if (!interceptorConfigured) {
     async error => {
       const originalRequest = error.config;
       
-      // Ignore errors during logout
       if (window.isLoggingOut) {
         return Promise.reject(error);
       }
       
-      // Handle 401 errors (auth failures)
       if (error.response?.status === 401 && !originalRequest._retry) {
-        // Prevent infinite retry loops
         if (originalRequest.url?.includes('/api/me') || 
             originalRequest.url?.includes('/refresh-token')) {
-          console.error('Auth check or refresh failed - redirecting to login');
           window.location.href = '/';
           return Promise.reject(error);
         }
         
         originalRequest._retry = true;
         
-        // If already refreshing, queue this request
         if (window.isRefreshing) {
           return new Promise((resolve, reject) => {
             window.failedQueue.push({ resolve, reject });
@@ -96,24 +82,19 @@ if (!interceptorConfigured) {
         window.isRefreshing = true;
         
         try {
-          // Attempt token refresh
           await axios.post(`${API}/api/refresh-token`, {}, {
             withCredentials: true,
             timeout: 5000
           });
           
-          console.log('Token refreshed successfully');
           window.isRefreshing = false;
           processQueue(null);
           
-          // Retry original request
           return axios(originalRequest);
         } catch (refreshError) {
-          console.error('Token refresh failed:', refreshError);
           window.isRefreshing = false;
           processQueue(refreshError);
           
-          // Clear auth state and redirect to login
           try {
             localStorage.clear();
             sessionStorage.clear();
@@ -124,23 +105,17 @@ if (!interceptorConfigured) {
         }
       }
       
-      // Handle network errors with retry
       if (!error.response && !originalRequest._retryCount) {
         originalRequest._retryCount = 0;
       }
       
       if (!error.response && originalRequest._retryCount < 3) {
         originalRequest._retryCount++;
-        console.log(`Retrying request (${originalRequest._retryCount}/3): ${originalRequest.url}`);
-        
-        // Exponential backoff: 1s, 2s, 4s
         const delay = Math.pow(2, originalRequest._retryCount - 1) * 1000;
         await new Promise(resolve => setTimeout(resolve, delay));
-        
         return axios(originalRequest);
       }
       
-      // Log non-401 errors only
       if (error.response?.status !== 401) {
         console.error('API Error:', {
           status: error.response?.status,
@@ -155,158 +130,57 @@ if (!interceptorConfigured) {
   );
 }
 
-function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refreshTrigger, sidebarNotes, setSidebarNotes, onNoteUpdate }) {
-  const [folders, setFolders] = useState([]);
+function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout }) {
+  const { notes, folders, loadNotes, loadFolders, createFolder, updateFolder, deleteFolder, deleteNote } = useNotes();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSection, setActiveSection] = useState('recent');
   const [expandedFolders, setExpandedFolders] = useState(new Set());
-  const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [editingFolder, setEditingFolder] = useState(null);
   const [editingFolderName, setEditingFolderName] = useState('');
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const navigate = useNavigate();
-  const isMountedRef = useRef(true);
 
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
-
-  const loadNotes = useCallback(async (showLoader = false) => {
-    if (window.isLoggingOut || !isMountedRef.current) return;
-    
-    if (showLoader) {
-      setIsLoading(true);
-    } else {
-      setIsRefreshing(true);
-    }
-    
-    try {
-      const res = await axios.get(`${API}/api/notes`, { 
-        withCredentials: true,
-        timeout: 10000
-      });
-      
-      if (!window.isLoggingOut && isMountedRef.current) {
-        setSidebarNotes(res.data);
-      }
-    } catch (error) {
-      if (!window.isLoggingOut && isMountedRef.current && error.response?.status === 401) {
-        onLogout();
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setIsLoading(false);
-        setIsRefreshing(false);
-      }
-    }
-  }, [onLogout, setSidebarNotes]);
-
-  const loadFolders = useCallback(async () => {
-    if (window.isLoggingOut || !isMountedRef.current) return;
-    
-    try {
-      const res = await axios.get(`${API}/api/home`, { 
-        withCredentials: true,
-        timeout: 10000
-      });
-      
-      if (!window.isLoggingOut && isMountedRef.current) {
-        setFolders(res.data.folders);
-      }
-    } catch (error) {
-      if (!window.isLoggingOut && isMountedRef.current && error.response?.status === 401) {
-        onLogout();
-      }
-    }
-  }, [onLogout]);
-
-  // Initial load
   useEffect(() => {
     loadNotes(true);
     loadFolders();
-  }, []);
 
-  // Refresh when trigger changes
-  useEffect(() => {
-    if (refreshTrigger > 0 && !window.isLoggingOut) {
-      loadNotes(false);
-      loadFolders();
-    }
-  }, [refreshTrigger]);
-
-  // Auto-refresh every 30 seconds
-  useEffect(() => {
     const interval = setInterval(() => {
-      if (!window.isLoggingOut && isMountedRef.current) {
+      if (!window.isLoggingOut) {
         loadNotes(false);
         loadFolders();
       }
     }, 30000);
     
     return () => clearInterval(interval);
-  }, []);
+  }, [loadNotes, loadFolders]);
 
-  const deleteNote = async (noteId, e) => {
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await Promise.all([loadNotes(false), loadFolders()]);
+    setIsRefreshing(false);
+  };
+
+  const handleDeleteNote = async (noteId, e) => {
     e.stopPropagation();
     if (!confirm('Delete this note?')) return;
     
-    try {
-      // Optimistic update - remove immediately
-      setSidebarNotes(prev => prev.filter(n => n.id !== noteId));
-      
-      await axios.delete(`${API}/api/notes/${noteId}`, { withCredentials: true });
-      
-      if (currentNoteId === noteId) {
-        navigate('/note/new');
-      }
-      
-      // Trigger refresh for other components
-      onNoteUpdate?.();
-    } catch (error) {
-      console.error('Failed to delete note:', error);
-      alert('Failed to delete note. Please try again.');
-      loadNotes(false); // Reload on error
-    }
-  };
-
-  const handleNoteClick = (noteId, e) => {
-    e.preventDefault();
-    if (currentNoteId === noteId) return;
-    onSelectNote(noteId);
-  };
-
-  const deleteFolder = async (folderId, e) => {
-    e.stopPropagation();
-    if (!confirm('Delete this folder? Notes will be moved to root.')) return;
+    await deleteNote(noteId);
     
-    try {
-      await axios.delete(`${API}/api/folders/${folderId}`, { withCredentials: true });
-      setFolders(folders.filter(f => f.id !== folderId));
-      loadNotes(false);
-    } catch (error) {
-      console.error('Failed to delete folder:', error);
-      alert('Failed to delete folder. Please try again.');
+    if (currentNoteId === noteId) {
+      navigate('/note/new');
     }
   };
 
-  const createFolder = async () => {
+  const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;
     
     try {
-      const res = await axios.post(`${API}/api/folders`, { 
-        name: newFolderName 
-      }, { withCredentials: true });
-      
-      setFolders([...folders, res.data]);
+      await createFolder(newFolderName);
       setNewFolderName('');
       setIsCreatingFolder(false);
     } catch (error) {
-      console.error('Failed to create folder:', error);
       alert('Failed to create folder. Please try again.');
     }
   };
@@ -321,21 +195,25 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
     if (!editingFolderName.trim()) return;
     
     try {
-      await axios.put(`${API}/api/folders/${folderId}`, { 
-        name: editingFolderName 
-      }, { withCredentials: true });
-      
-      setFolders(folders.map(f => 
-        f.id === folderId ? { ...f, name: editingFolderName } : f
-      ));
+      await updateFolder(folderId, { name: editingFolderName });
       setEditingFolder(null);
     } catch (error) {
-      console.error('Failed to update folder:', error);
       alert('Failed to update folder. Please try again.');
     }
   };
 
-  const filteredNotes = sidebarNotes.filter(n => 
+  const handleDeleteFolder = async (folderId, e) => {
+    e.stopPropagation();
+    if (!confirm('Delete this folder? Notes will be moved to root.')) return;
+    
+    try {
+      await deleteFolder(folderId);
+    } catch (error) {
+      alert('Failed to delete folder. Please try again.');
+    }
+  };
+
+  const filteredNotes = notes.filter(n => 
     n.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -366,16 +244,12 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
 
   return (
     <div className="w-64 h-screen sidebar-themed flex flex-col">
-      {/* Header */}
       <div className="p-4 border-b border-theme-primary">
         <div className="flex items-center justify-between mb-3">
           <h1 className="text-sm font-semibold text-theme-primary">Messy Notes</h1>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => {
-                loadNotes(false);
-                loadFolders();
-              }}
+              onClick={handleRefresh}
               disabled={isRefreshing}
               className="p-1.5 theme-bg-hover rounded transition-colors disabled:opacity-50"
               title="Refresh"
@@ -392,7 +266,6 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
           </div>
         </div>
         
-        {/* Search */}
         <div className="relative">
           <Search size={12} className="absolute left-2 top-2 text-theme-tertiary" />
           <input
@@ -405,9 +278,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
         </div>
       </div>
 
-      {/* Navigation */}
       <div className="flex-1 overflow-y-auto">
-        {/* Quick Actions */}
         <div className="p-2 space-y-1">
           <button
             onClick={onNewNote}
@@ -436,7 +307,6 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
 
         <div className="h-px border-theme-primary my-2" />
 
-        {/* Sections */}
         <div className="px-2 space-y-1">
           <button
             onClick={() => setActiveSection('recent')}
@@ -474,7 +344,6 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
 
         <div className="h-px border-theme-primary my-2" />
 
-        {/* Folders */}
         <div className="px-2">
           <div className="flex items-center justify-between px-2 py-1 mb-1">
             <div className="text-[10px] uppercase tracking-wider text-theme-tertiary">
@@ -496,7 +365,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
                 value={newFolderName}
                 onChange={(e) => setNewFolderName(e.target.value)}
                 onKeyPress={(e) => {
-                  if (e.key === 'Enter') createFolder();
+                  if (e.key === 'Enter') handleCreateFolder();
                   if (e.key === 'Escape') setIsCreatingFolder(false);
                 }}
                 placeholder="Folder name..."
@@ -505,7 +374,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
               />
               <div className="flex gap-1">
                 <button
-                  onClick={createFolder}
+                  onClick={handleCreateFolder}
                   className="flex-1 px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700"
                 >
                   Create
@@ -578,7 +447,7 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
                       <Edit3 size={10} className="text-blue-400" />
                     </button>
                     <button
-                      onClick={(e) => deleteFolder(folder.id, e)}
+                      onClick={(e) => handleDeleteFolder(folder.id, e)}
                       className="p-0.5 theme-bg-hover rounded"
                       title="Delete"
                     >
@@ -593,56 +462,50 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
 
         <div className="h-px border-theme-primary my-2" />
 
-        {/* Notes List */}
         <div className="px-2 pb-4">
           <div className="text-[10px] uppercase tracking-wider text-theme-tertiary px-2 py-1 mb-1">
-            Notes {isLoading && <Loader size={10} className="inline animate-spin ml-1" />}
+            Notes
           </div>
           
-          {isLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader size={20} className="animate-spin text-theme-tertiary" />
-            </div>
-          ) : (
-            <>
-              {getDisplayNotes().map(note => (
-                <button
-                  key={note.id}
-                  onClick={(e) => handleNoteClick(note.id, e)}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors group ${
-                    currentNoteId === note.id ? 'bg-theme-tertiary text-theme-primary ring-2 ring-purple-500 ring-opacity-30' : 'theme-bg-hover text-theme-secondary'
-                  }`}
-                >
-                  <FileText size={12} className={note.sticky ? 'text-yellow-400' : 'text-theme-tertiary'} />
-                  <div className="flex-1 min-w-0">
-                    <div className="truncate">{note.title}</div>
-                    <div className="text-[10px] text-theme-tertiary">
-                      {new Date(note.updatedAt).toLocaleDateString()}
-                    </div>
-                  </div>
-                  {note.sticky && <Star size={10} className="text-yellow-400" fill="currentColor" />}
-                  {note.ephemeral && <Zap size={10} className="text-theme-tertiary" />}
-                  <button
-                    onClick={(e) => deleteNote(note.id, e)}
-                    className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-600 rounded transition-opacity"
-                    title="Delete"
-                  >
-                    <Trash2 size={10} className="text-red-400" />
-                  </button>
-                </button>
-              ))}
-              
-              {getDisplayNotes().length === 0 && (
-                <div className="px-2 py-4 text-center text-xs text-theme-tertiary">
-                  No notes found
+          {getDisplayNotes().map(note => (
+            <button
+              key={note.id}
+              onClick={(e) => {
+                e.preventDefault();
+                if (currentNoteId === note.id) return;
+                onSelectNote(note.id);
+              }}
+              className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors group ${
+                currentNoteId === note.id ? 'bg-theme-tertiary text-theme-primary ring-2 ring-purple-500 ring-opacity-30' : 'theme-bg-hover text-theme-secondary'
+              }`}
+            >
+              <FileText size={12} className={note.sticky ? 'text-yellow-400' : 'text-theme-tertiary'} />
+              <div className="flex-1 min-w-0">
+                <div className="truncate">{note.title}</div>
+                <div className="text-[10px] text-theme-tertiary">
+                  {new Date(note.updatedAt).toLocaleDateString()}
                 </div>
-              )}
-            </>
+              </div>
+              {note.sticky && <Star size={10} className="text-yellow-400" fill="currentColor" />}
+              {note.ephemeral && <Zap size={10} className="text-theme-tertiary" />}
+              <button
+                onClick={(e) => handleDeleteNote(note.id, e)}
+                className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-600 rounded transition-opacity"
+                title="Delete"
+              >
+                <Trash2 size={10} className="text-red-400" />
+              </button>
+            </button>
+          ))}
+          
+          {getDisplayNotes().length === 0 && (
+            <div className="px-2 py-4 text-center text-xs text-theme-tertiary">
+              No notes found
+            </div>
           )}
         </div>
       </div>
 
-      {/* User Info */}
       <div className="p-3 border-t border-theme-primary">
         <div className="flex items-center gap-2">
           <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white text-xs font-semibold">
@@ -659,13 +522,10 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout, refre
 }
 
 function MainLayout({ user }) {
+  const { createNote } = useNotes();
   const [showQuickCapture, setShowQuickCapture] = useState(false);
   const [currentNoteId, setCurrentNoteId] = useState(null);
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isCreatingNote, setIsCreatingNote] = useState(false);
-  
-  // NEW: Store notes locally for immediate updates
-  const [sidebarNotes, setSidebarNotes] = useState([]);
   
   const navigate = useNavigate();
   const params = useParams();
@@ -696,23 +556,15 @@ function MainLayout({ user }) {
     
     setIsCreatingNote(true);
     try {
-      const res = await axios.post(`${API}/api/notes`, {}, { 
-        withCredentials: true,
-        timeout: 10000
-      });
-      navigate(`/note/${res.data.id}`);
-      setCurrentNoteId(res.data.id);
-      
-      // Add to sidebar immediately
-      setSidebarNotes(prev => [res.data, ...prev]);
-      setRefreshTrigger(prev => prev + 1);
+      const newNote = await createNote({});
+      navigate(`/note/${newNote.id}`);
+      setCurrentNoteId(newNote.id);
     } catch (error) {
-      console.error('Failed to create note:', error);
       alert('Failed to create note. Please try again.');
     } finally {
       setIsCreatingNote(false);
     }
-  }, [isCreatingNote, navigate]);
+  }, [isCreatingNote, createNote, navigate]);
 
   const handleSelectNote = useCallback((noteId) => {
     if (currentNoteId === noteId) return;
@@ -721,7 +573,6 @@ function MainLayout({ user }) {
   }, [currentNoteId, navigate]);
 
   const handleLogout = async () => {
-    // Set flag BEFORE any async operations
     window.isLoggingOut = true;
     window.isRefreshing = false;
     window.failedQueue = [];
@@ -736,57 +587,14 @@ function MainLayout({ user }) {
     try {
       localStorage.clear();
       sessionStorage.clear();
-    } catch (e) {
-      console.error('Failed to clear storage:', e);
-    }
+    } catch (e) {}
     
-    // Force full page reload - this clears all state including the flag
     window.location.href = '/';
   };
 
   const handleQuickCaptureClose = () => {
     setShowQuickCapture(false);
-    setRefreshTrigger(prev => prev + 1);
   };
-
-  const handleNoteUpdate = () => {
-    setRefreshTrigger(prev => prev + 1);
-  };
-
-  // Handle clearing all notes (for delete all operation)
-  const handleClearAllNotes = useCallback(() => {
-    setSidebarNotes([]);
-    setRefreshTrigger(prev => prev + 1);
-  }, []);
-
-  // Handle deleting a single note
-  const handleDeleteNote = useCallback((noteId) => {
-    setSidebarNotes(prev => prev.filter(n => n.id !== noteId));
-    setRefreshTrigger(prev => prev + 1);
-  }, []);
-
-  // Handle live note updates from editor
-  const handleLiveNoteUpdate = useCallback((noteId, updates) => {
-    setSidebarNotes(prev => {
-      const noteIndex = prev.findIndex(n => n.id === noteId);
-      if (noteIndex === -1) return prev;
-      
-      const newNotes = [...prev];
-      newNotes[noteIndex] = {
-        ...newNotes[noteIndex],
-        ...updates,
-        updatedAt: new Date().toISOString() // Update timestamp
-      };
-      
-      // Move to top if title changed (indicates active editing)
-      if (updates.title) {
-        const [updated] = newNotes.splice(noteIndex, 1);
-        newNotes.unshift(updated);
-      }
-      
-      return newNotes;
-    });
-  }, []);
 
   return (
     <div className="flex h-screen overflow-hidden theme-bg-primary">
@@ -796,10 +604,6 @@ function MainLayout({ user }) {
         onSelectNote={handleSelectNote}
         onNewNote={handleNewNote}
         onLogout={handleLogout}
-        refreshTrigger={refreshTrigger}
-        sidebarNotes={sidebarNotes}
-        setSidebarNotes={setSidebarNotes}
-        onNoteUpdate={handleNoteUpdate}
       />
       
       <div className="flex-1 overflow-hidden relative">
@@ -814,28 +618,10 @@ function MainLayout({ user }) {
         
         <Routes>
           <Route path="/" element={<Navigate to="/note/new" replace />} />
-          <Route 
-            path="/note/:id" 
-            element={
-              <EditorPage 
-                onNoteUpdate={handleNoteUpdate}
-                onLiveUpdate={handleLiveNoteUpdate}
-              />
-            } 
-          />
-          <Route 
-            path="/dashboard" 
-            element={
-              <Dashboard 
-                user={user} 
-                onUpdate={handleNoteUpdate}
-                onClearAll={handleClearAllNotes}
-                onDeleteNote={handleDeleteNote}
-              />
-            } 
-          />
-          <Route path="/mindmap" element={<MessyMap onUpdate={handleNoteUpdate} />} />
-          <Route path="/mindmap/:folderId" element={<MessyMap onUpdate={handleNoteUpdate} />} />
+          <Route path="/note/:id" element={<EditorPage />} />
+          <Route path="/dashboard" element={<Dashboard user={user} />} />
+          <Route path="/mindmap" element={<MessyMap />} />
+          <Route path="/mindmap/:folderId" element={<MessyMap />} />
           <Route path="*" element={<Navigate to="/note/new" replace />} />
         </Routes>
       </div>
@@ -856,7 +642,6 @@ export default function App() {
   });
   const hasCheckedAuth = useRef(false);
 
-  // NEW: Periodic token refresh (every 6 days to stay under 7-day expiry)
   useEffect(() => {
     if (!authenticated) return;
 
@@ -868,24 +653,20 @@ export default function App() {
           withCredentials: true,
           timeout: 5000
         });
-        console.log('Token auto-refreshed');
       } catch (error) {
         console.error('Auto-refresh failed:', error);
-        // Don't logout here - let interceptor handle it on next request
       }
-    }, 6 * 24 * 60 * 60 * 1000); // Every 6 days
+    }, 6 * 24 * 60 * 60 * 1000);
 
     return () => clearInterval(refreshInterval);
   }, [authenticated]);
 
-  // Apply theme to document
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
   }, [theme]);
 
   useEffect(() => {
-    // Only check auth once
     if (!hasCheckedAuth.current) {
       hasCheckedAuth.current = true;
       checkAuth();
@@ -893,7 +674,6 @@ export default function App() {
   }, []);
 
   const checkAuth = async () => {
-    // Don't check if logging out
     if (window.isLoggingOut) {
       setAuthenticated(false);
       return;
@@ -907,12 +687,11 @@ export default function App() {
       setAuthenticated(true);
       setUser(res.data);
       setAuthError(null);
-      window.isLoggingOut = false; // Reset flag on successful auth
+      window.isLoggingOut = false;
     } catch (error) {
       setAuthenticated(false);
       setUser(null);
       
-      // Only show error message for non-401 errors
       if (error.response?.status !== 401) {
         console.error('Auth check failed:', error);
         setAuthError('Authentication check failed. Please try again.');
@@ -971,7 +750,9 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      <MainLayout user={user} />
+      <NotesProvider>
+        <MainLayout user={user} />
+      </NotesProvider>
     </BrowserRouter>
   );
 }
