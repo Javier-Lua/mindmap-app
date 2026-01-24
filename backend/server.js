@@ -320,19 +320,64 @@ app.post('/api/upload', auth, async (req, res) => {
 
 app.post('/api/notes', auth, async (req, res) => {
   try {
+    // Build the data object with only the fields that are provided
+    const data = {
+      userId: req.userId,
+      x: req.body.x !== undefined ? req.body.x : Math.random() * 500,
+      y: req.body.y !== undefined ? req.body.y : Math.random() * 500,
+      type: req.body.type || 'text',
+      color: req.body.color || '#FFFFFF',
+      ephemeral: req.body.ephemeral !== false,
+      priority: req.body.priority || 0,
+      weight: 1.0
+    };
+
+    // Add optional fields if provided
+    if (req.body.folderId) {
+      data.folderId = req.body.folderId;
+    }
+    if (req.body.title) {
+      data.title = req.body.title;
+    }
+    if (req.body.rawText) {
+      data.rawText = req.body.rawText;
+    }
+    if (req.body.content) {
+      data.content = req.body.content;
+    }
+    if (req.body.sticky !== undefined) {
+      data.sticky = req.body.sticky;
+    }
+    if (req.body.archived !== undefined) {
+      data.archived = req.body.archived;
+    }
+
     const note = await prisma.note.create({
-      data: {
-        userId: req.userId,
-        x: req.body.x || Math.random() * 500,
-        y: req.body.y || Math.random() * 500,
-        folderId: req.body.folderId,
-        type: req.body.type || 'text',
-        color: req.body.color || '#FFFFFF',
-        ephemeral: req.body.ephemeral !== false,
-        priority: req.body.priority || 0,
-        weight: 1.0
-      }
+      data
     });
+
+    // If rawText was provided, generate embedding
+    if (req.body.rawText && req.body.rawText.trim() && extractor) {
+      try {
+        const output = await extractor(req.body.rawText, { 
+          pooling: 'mean', 
+          normalize: true 
+        });
+        const embeddingArray = Array.from(output.data);
+        
+        await prisma.$executeRaw`
+          UPDATE "Note" 
+          SET embedding = ${embeddingArray}::vector 
+          WHERE id = ${note.id}
+        `;
+        
+        console.log(`Generated embedding for new note ${note.id}`);
+      } catch (embedError) {
+        console.error('Failed to generate embedding for new note:', embedError);
+        // Don't fail the request just because embedding failed
+      }
+    }
+
     res.json(note);
   } catch (error) {
     console.error('Create note error:', error);
@@ -753,7 +798,7 @@ app.post('/api/cluster', auth, async (req, res) => {
     
     // Get notes with embeddings
     const notes = await prisma.$queryRaw`
-      SELECT id, title, x, y, embedding::text as embedding_text
+      SELECT id, title, x, y, embedding::text as embedding_text, "rawText"
       FROM "Note"
       WHERE "userId" = ${req.userId} 
         AND embedding IS NOT NULL 
@@ -771,44 +816,82 @@ app.post('/api/cluster', auth, async (req, res) => {
     
     // Parse embeddings from PostgreSQL vector format
     const embeddings = notes.map(n => {
+      // PostgreSQL returns vectors as "[1,2,3,...]" format
       const vectorStr = n.embedding_text.replace(/[\[\]]/g, '');
-      return vectorStr.split(',').map(parseFloat);
+      return vectorStr.split(',').map(v => parseFloat(v.trim()));
     });
+    
+    // Validate embeddings
+    if (embeddings.some(emb => emb.some(v => isNaN(v)))) {
+      console.error('Invalid embeddings detected');
+      return res.status(500).json({ 
+        error: 'Invalid embedding data. Please regenerate embeddings.' 
+      });
+    }
     
     // Determine number of clusters (2-5 clusters, max half the notes)
     const numClusters = Math.min(5, Math.max(2, Math.floor(notes.length / 2)));
     
     console.log(`Clustering ${notes.length} notes into ${numClusters} clusters`);
+    console.log(`Embedding dimensions: ${embeddings[0].length}`);
     
-    // Run k-means clustering with proper options
-    // ml-kmeans API: kmeans(data, k, options)
-    const result = kmeans(embeddings, numClusters, {
-      initialization: 'kmeans++', // Changed from 'mostDistant' to 'kmeans++'
-      maxIterations: 100,
-      tolerance: 1e-4
-    });
+    // Run k-means clustering
+    // ml-kmeans expects: kmeans(data, numberOfClusters, options)
+    let result;
+    try {
+      result = kmeans(embeddings, numClusters, {
+        initialization: 'kmeans++',
+        maxIterations: 100,
+        tolerance: 1e-4,
+        seed: 42  // For reproducible results
+      });
+    } catch (kmeansError) {
+      console.error('K-means error:', kmeansError);
+      // Fallback: try with just basic parameters
+      try {
+        result = kmeans(embeddings, numClusters);
+      } catch (fallbackError) {
+        console.error('K-means fallback also failed:', fallbackError);
+        return res.status(500).json({ 
+          error: 'Clustering algorithm failed. Try with more notes or different content.',
+          details: process.env.NODE_ENV === 'development' ? fallbackError.message : undefined
+        });
+      }
+    }
+    
+    // Verify we got valid results
+    if (!result || !result.clusters || result.clusters.length !== notes.length) {
+      console.error('K-means returned invalid results:', result);
+      return res.status(500).json({ 
+        error: 'Clustering produced invalid results. Please try again.' 
+      });
+    }
     
     // Group notes by cluster
     const clusters = {};
     result.clusters.forEach((clusterIdx, i) => {
-      if (!clusters[clusterIdx]) clusters[clusterIdx] = [];
+      if (!clusters[clusterIdx]) {
+        clusters[clusterIdx] = [];
+      }
       clusters[clusterIdx].push({
         id: notes[i].id,
         title: notes[i].title,
         x: parseFloat(notes[i].x),
-        y: parseFloat(notes[i].y)
+        y: parseFloat(notes[i].y),
+        preview: notes[i].rawText.slice(0, 100)
       });
     });
     
     // Create cluster data with colors and positions
     const clusterColors = ['#FEE2E2', '#DBEAFE', '#E0E7FF', '#FCE7F3', '#FEF3C7'];
     const clusterData = Object.entries(clusters).map(([idx, noteList]) => {
+      // Calculate center based on current note positions
       const centerX = noteList.reduce((sum, n) => sum + n.x, 0) / noteList.length;
       const centerY = noteList.reduce((sum, n) => sum + n.y, 0) / noteList.length;
       
       return {
-        id: idx,
-        name: `Cluster ${parseInt(idx) + 1}`,
+        id: `cluster-${idx}`,
+        name: `Group ${parseInt(idx) + 1}`,
         notes: noteList,
         centerX,
         centerY,
@@ -816,11 +899,20 @@ app.post('/api/cluster', auth, async (req, res) => {
       };
     });
     
+    // Sort clusters by size (largest first)
+    clusterData.sort((a, b) => b.notes.length - a.notes.length);
+    
+    console.log(`Created ${clusterData.length} clusters:`, 
+      clusterData.map(c => `${c.name}: ${c.notes.length} notes`).join(', ')
+    );
+    
     // If not preview, actually update note positions
     if (!preview) {
+      console.log('Applying cluster positions...');
+      
       for (const cluster of clusterData) {
-        // Calculate radius based on number of notes
-        const radius = Math.min(200, cluster.notes.length * 35);
+        // Calculate radius based on number of notes (more notes = larger circle)
+        const radius = Math.min(250, Math.max(100, cluster.notes.length * 40));
         const angleStep = (2 * Math.PI) / cluster.notes.length;
         
         // Position notes in a circle around cluster center
@@ -838,8 +930,12 @@ app.post('/api/cluster', auth, async (req, res) => {
               ephemeral: false
             }
           });
+          
+          console.log(`Moved note ${cluster.notes[i].id} to (${newX.toFixed(1)}, ${newY.toFixed(1)})`);
         }
       }
+      
+      console.log('Cluster positions applied successfully');
     }
     
     res.json({ 
@@ -848,11 +944,14 @@ app.post('/api/cluster', auth, async (req, res) => {
       stats: {
         totalNotes: notes.length,
         numClusters: clusterData.length,
-        averageClusterSize: Math.round(notes.length / clusterData.length)
+        averageClusterSize: Math.round(notes.length / clusterData.length),
+        smallestCluster: Math.min(...clusterData.map(c => c.notes.length)),
+        largestCluster: Math.max(...clusterData.map(c => c.notes.length))
       }
     });
   } catch (error) {
     console.error('Clustering error:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({ 
       error: 'Clustering failed: ' + error.message,
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined

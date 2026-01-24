@@ -20,6 +20,7 @@ export const NotesProvider = ({ children }) => {
   const [lastSync, setLastSync] = useState(null);
   const activeRequestsRef = useRef(new Set());
   const notesMapRef = useRef(new Map());
+  const createNoteInProgressRef = useRef(false);
 
   useEffect(() => {
     const map = new Map();
@@ -44,7 +45,9 @@ export const NotesProvider = ({ children }) => {
       });
 
       if (activeRequestsRef.current.has(requestId)) {
-        setNotes(res.data);
+        // Filter out any temporary notes that might still be in state
+        const serverNotes = res.data.filter(note => !note.id.startsWith('temp-'));
+        setNotes(serverNotes);
         setLastSync(Date.now());
       }
     } catch (error) {
@@ -95,6 +98,12 @@ export const NotesProvider = ({ children }) => {
   }, []);
 
   const updateNote = useCallback(async (noteId, updates) => {
+    // Don't update temporary notes
+    if (noteId.startsWith('temp-')) {
+      console.warn('Attempted to update temporary note:', noteId);
+      return;
+    }
+
     // Optimistically update local state first
     updateNoteLocal(noteId, updates);
 
@@ -132,29 +141,23 @@ export const NotesProvider = ({ children }) => {
   }, [updateNoteLocal, loadNotes]);
 
   const createNote = useCallback(async (data = {}) => {
-    const tempId = `temp-${Date.now()}`;
-    const tempNote = {
-      id: tempId,
-      title: 'Untitled Thought',
-      rawText: '',
-      content: null,
-      ephemeral: data.ephemeral !== false,
-      sticky: false,
-      archived: false,
-      updatedAt: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      ...data
-    };
+    // Prevent concurrent note creation
+    if (createNoteInProgressRef.current) {
+      console.warn('Note creation already in progress, ignoring duplicate request');
+      return;
+    }
 
-    setNotes(prev => [tempNote, ...prev]);
+    createNoteInProgressRef.current = true;
 
     try {
+      // Create note directly without optimistic update to avoid duplicates
       const res = await axios.post(`${API}/api/notes`, data, {
         withCredentials: true,
         timeout: 10000
       });
 
-      setNotes(prev => prev.map(n => n.id === tempId ? res.data : n));
+      // Add the new note to the beginning of the list
+      setNotes(prev => [res.data, ...prev]);
       
       // Update last sync time
       setLastSync(Date.now());
@@ -162,12 +165,19 @@ export const NotesProvider = ({ children }) => {
       return res.data;
     } catch (error) {
       console.error('Failed to create note:', error);
-      setNotes(prev => prev.filter(n => n.id !== tempId));
       throw error;
+    } finally {
+      createNoteInProgressRef.current = false;
     }
   }, []);
 
   const deleteNote = useCallback(async (noteId) => {
+    // Don't try to delete temporary notes
+    if (noteId.startsWith('temp-')) {
+      setNotes(prev => prev.filter(n => n.id !== noteId));
+      return;
+    }
+
     // Optimistically remove from local state
     setNotes(prev => prev.filter(n => n.id !== noteId));
 

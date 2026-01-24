@@ -177,6 +177,13 @@ export default function EditorPage() {
   };
 
   const loadNote = async () => {
+    // Don't try to load temporary notes from server
+    if (id.startsWith('temp-')) {
+      console.warn('Attempted to load temporary note, redirecting...');
+      navigate('/', { replace: true });
+      return;
+    }
+
     setLoading(true);
     setSaveError(null);
 
@@ -217,9 +224,12 @@ export default function EditorPage() {
       
       if (error.response?.status === 404) {
         setSaveError('Note not found');
+        // Use replace to avoid back button issues
         setTimeout(() => {
           navigate('/', { replace: true });
         }, 1000);
+      } else if (error.response?.status === 401) {
+        setSaveError('Session expired - please refresh the page');
       } else {
         setSaveError('Failed to load note. Please try again.');
       }

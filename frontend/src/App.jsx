@@ -225,20 +225,25 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout }) {
     }
   };
 
-  const filteredNotes = notes.filter(n => 
-    n.title.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredNotes = notes
+    .filter(n => !n.id.startsWith('temp-')) // Filter out temporary notes
+    .filter(n => n.title.toLowerCase().includes(searchQuery.toLowerCase()));
 
   const recentNotes = filteredNotes.slice(0, 10);
   const stickyNotes = filteredNotes.filter(n => n.sticky);
   const ephemeralNotes = filteredNotes.filter(n => n.ephemeral);
 
   const getDisplayNotes = () => {
+    const activeNotes = filteredNotes.filter(n => !n.id.startsWith('temp-'));
+    
     switch (activeSection) {
-      case 'sticky': return stickyNotes;
-      case 'ephemeral': return ephemeralNotes;
+      case 'sticky': 
+        return activeNotes.filter(n => n.sticky);
+      case 'ephemeral': 
+        return activeNotes.filter(n => n.ephemeral);
       case 'recent':
-      default: return recentNotes;
+      default: 
+        return activeNotes.slice(0, 10);
     }
   };
 

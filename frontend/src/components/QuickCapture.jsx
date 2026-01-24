@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Zap, X, Mic, MicOff, Image, Paperclip, Link as LinkIcon, Type } from 'lucide-react';
+import { Zap, X, Mic, MicOff, Image, Paperclip, Type } from 'lucide-react';
 import { useNotes } from '../contexts/NotesContext';
 
 export default function QuickCapture({ onClose }) {
@@ -13,7 +13,6 @@ export default function QuickCapture({ onClose }) {
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
   const recognitionRef = useRef(null);
-  const hasSubmittedRef = useRef(false);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -89,24 +88,23 @@ export default function QuickCapture({ onClose }) {
 
   const handleSubmit = async (e) => {
     e?.preventDefault();
+    e?.stopPropagation();
     
-    // Prevent double submission
-    if (isSaving || hasSubmittedRef.current) {
-      console.log('Already saving or submitted, ignoring...');
+    // Prevent any form of double submission
+    if (isSaving) {
       return;
     }
     
     if (!text.trim() && !file) {
-      console.log('No content to save');
       return;
     }
 
-    hasSubmittedRef.current = true;
     setIsSaving(true);
 
     try {
       const title = text.split('\n')[0].slice(0, 50) || 'Quick thought';
       
+      // Use the context's createNote which handles everything properly
       await createNote({
         title,
         rawText: text,
@@ -124,12 +122,11 @@ export default function QuickCapture({ onClose }) {
         y: Math.random() * 500
       });
 
-      // Close after successful save
+      // Close immediately after successful save
       onClose();
     } catch (error) {
       console.error('Failed to save quick capture:', error);
       alert('Failed to save note. Please try again.');
-      hasSubmittedRef.current = false;
       setIsSaving(false);
     }
   };
@@ -150,7 +147,7 @@ export default function QuickCapture({ onClose }) {
   };
 
   const handleClose = () => {
-    if (isSaving) return; // Prevent closing while saving
+    if (isSaving) return;
     onClose();
   };
 
@@ -242,6 +239,13 @@ export default function QuickCapture({ onClose }) {
             value={text}
             onChange={(e) => setText(e.target.value)}
             onPaste={handlePaste}
+            onKeyDown={(e) => {
+              // Prevent Enter from submitting the form
+              if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {
+                e.preventDefault();
+                handleSubmit(e);
+              }
+            }}
             placeholder="What's on your mind? (Paste images, drop files, or start typing...)"
             className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-purple-500 resize-none text-base"
             rows={5}
@@ -315,6 +319,10 @@ export default function QuickCapture({ onClose }) {
             <div className="flex items-center gap-1">
               <kbd className="px-1.5 py-0.5 bg-gray-100 rounded border border-gray-300 font-mono">Ctrl+V</kbd>
               <span>paste images</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <kbd className="px-1.5 py-0.5 bg-gray-100 rounded border border-gray-300 font-mono">Enter</kbd>
+              <span>to save</span>
             </div>
             <div className="flex items-center gap-1">
               <kbd className="px-1.5 py-0.5 bg-gray-100 rounded border border-gray-300 font-mono">Esc</kbd>
