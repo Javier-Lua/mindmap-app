@@ -57,6 +57,9 @@ export default function MessyMap() {
   
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const [lastClickTime, setLastClickTime] = useState(0);
+
+  const CLICK_DELAY = 300;
   
   const isUpdatingRef = useRef(false);
   const lastLoadTimeRef = useRef(0);
@@ -465,6 +468,15 @@ export default function MessyMap() {
       if (connectingFrom) {
         setConnectingFrom(null);
       } else {
+        // Prevent rapid clicks from creating multiple notes
+        const now = Date.now();
+        if (now - lastClickTime < CLICK_DELAY) {
+          setMouseDownPos(null);
+          setHasMoved(false);
+          return;
+        }
+        setLastClickTime(now);
+        
         const rect = canvasRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
@@ -473,6 +485,12 @@ export default function MessyMap() {
     }
     setMouseDownPos(null);
     setHasMoved(false);
+  };
+
+  const handleCanvasDoubleClick = (e) => {
+    // Prevent double-click from creating two notes and triggering navigation
+    e.preventDefault();
+    e.stopPropagation();
   };
 
   const handleWheel = (e) => {
@@ -679,6 +697,7 @@ export default function MessyMap() {
         ref={canvasRef}
         className="w-full h-full cursor-crosshair"
         onClick={handleCanvasClick}
+        onDoubleClick={handleCanvasDoubleClick}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
