@@ -1820,6 +1820,7 @@ const CanvasView = ({ onBack, conceptName, conceptId, initialData, onSave }) => 
 export default function MessyMap() {
   const navigate = useNavigate();
   const { folderId } = useParams();
+  const { notes, createNote, deleteNote } = useNotes();
 
   // --- VIEW STATE ---
   const [currentView, setCurrentView] = useState('GRAPH'); // 'GRAPH' or 'CANVAS'

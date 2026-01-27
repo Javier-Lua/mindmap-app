@@ -456,20 +456,20 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout }) {
                   <span className="flex-1 truncate">{folder.name}</span>
                   <span className="text-[10px] text-theme-tertiary">{folder._count?.notes || 0}</span>
                   <div className="opacity-0 group-hover:opacity-100 flex gap-1">
-                    <button
+                    <div
                       onClick={(e) => startEditFolder(folder, e)}
-                      className="p-0.5 theme-bg-hover rounded"
+                      className="p-0.5 theme-bg-hover rounded cursor-pointer"
                       title="Rename"
                     >
                       <Edit3 size={10} className="text-blue-400" />
-                    </button>
-                    <button
+                    </div>
+                    <div
                       onClick={(e) => handleDeleteFolder(folder.id, e)}
-                      className="p-0.5 theme-bg-hover rounded"
+                      className="p-0.5 theme-bg-hover rounded cursor-pointer"
                       title="Delete"
                     >
                       <Trash2 size={10} className="text-red-400" />
-                    </button>
+                    </div>
                   </div>
                 </button>
               )}
