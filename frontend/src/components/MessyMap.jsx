@@ -426,7 +426,8 @@ const detectLeidenCommunities = (nodes, edges) => {
 
 // --- GRAPH VIEW COMPONENT ---
 const GraphView = ({ initialNodes, initialEdges, onNoteClick, onSave }) => {
-  const [nodes, setNodes] = useState(initialNodes);
+  const { notes, createNote, deleteNote } = useNotes();
+  const [graphMetadata, setGraphMetadata] = useState({});
   const [edges, setEdges] = useState(initialEdges);
   const [viewport, setViewport] = useState({ x: window.innerWidth / 2, y: window.innerHeight / 2, zoom: 1 });
   
@@ -436,6 +437,25 @@ const GraphView = ({ initialNodes, initialEdges, onNoteClick, onSave }) => {
   const [connectionMousePos, setConnectionMousePos] = useState({ x: 0, y: 0 });
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [renamingNodeId, setRenamingNodeId] = useState(null);
+
+  // Build nodes from actual notes + metadata
+  const nodes = useMemo(() => {
+    return notes
+      .filter(note => !note.archived)
+      .map(note => {
+        const meta = graphMetadata[note.id] || {};
+        return {
+          id: note.id,
+          label: note.title,
+          x: meta.x ?? Math.random() * 400 - 200,
+          y: meta.y ?? Math.random() * 400 - 200,
+          vx: meta.vx ?? 0,
+          vy: meta.vy ?? 0,
+          radius: meta.radius ?? 8,
+          lastVisited: new Date(note.updatedAt).getTime()
+        };
+      });
+  }, [notes, graphMetadata]);
   
   const dragStartPos = useRef({ x: 0, y: 0 });
   const hasDragged = useRef(false);
@@ -515,44 +535,61 @@ const GraphView = ({ initialNodes, initialEdges, onNoteClick, onSave }) => {
 
   useEffect(() => {
     const simulate = () => {
-      setNodes(prevNodes => {
-        const nextNodes = prevNodes.map(n => ({ ...n }));
+      setGraphMetadata(prevMeta => {
+        const nextMeta = { ...prevMeta };
+
+        // Build current nodes with positions from metadata
+        const currentNodes = nodes.map(n => ({
+          ...n,
+          x: nextMeta[n.id]?.x ?? n.x,
+          y: nextMeta[n.id]?.y ?? n.y,
+          vx: nextMeta[n.id]?.vx ?? 0,
+          vy: nextMeta[n.id]?.vy ?? 0,
+          radius: nextMeta[n.id]?.radius ?? 8
+        }));
+
+        // Create a lookup map for O(1) access by id
+        const nodeMap = {};
+        currentNodes.forEach(n => { nodeMap[n.id] = n; });
+
         const k = 0.05;
         const repulsion = 10000;
         const damping = 0.9;
         const centerForce = 0.005;
 
-        for (let i = 0; i < nextNodes.length; i++) {
-          for (let j = i + 1; j < nextNodes.length; j++) {
-            const dx = nextNodes[i].x - nextNodes[j].x;
-            const dy = nextNodes[i].y - nextNodes[j].y;
+        // Repulsion between nodes
+        for (let i = 0; i < currentNodes.length; i++) {
+          for (let j = i + 1; j < currentNodes.length; j++) {
+            const dx = currentNodes[i].x - currentNodes[j].x;
+            const dy = currentNodes[i].y - currentNodes[j].y;
             const distSq = dx * dx + dy * dy;
             const dist = Math.sqrt(distSq) || 0.1;
             const f = repulsion / (distSq + 100);
-            
+
             const fx = (dx / dist) * f;
             const fy = (dy / dist) * f;
-            
-            if (nextNodes[i].id !== draggingNodeId) {
-              nextNodes[i].vx += fx;
-              nextNodes[i].vy += fy;
+
+            if (currentNodes[i].id !== draggingNodeId) {
+              currentNodes[i].vx += fx;
+              currentNodes[i].vy += fy;
             }
-            if (nextNodes[j].id !== draggingNodeId) {
-              nextNodes[j].vx -= fx;
-              nextNodes[j].vy -= fy;
+            if (currentNodes[j].id !== draggingNodeId) {
+              currentNodes[j].vx -= fx;
+              currentNodes[j].vy -= fy;
             }
           }
         }
 
+        // Spring forces along edges using the lookup map
         edges.forEach(edge => {
-          const s = nextNodes.find(n => n.id === edge.source);
-          const t = nextNodes.find(n => n.id === edge.target);
+          const s = nodeMap[edge.source];
+          const t = nodeMap[edge.target];
           if (s && t) {
             const dx = t.x - s.x;
             const dy = t.y - s.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
+            const dist = Math.sqrt(dx * dx + dy * dy) || 0.1;
             const force = (dist - 150) * k;
-            
+
             const fx = (dx / dist) * force;
             const fy = (dy / dist) * force;
 
@@ -567,7 +604,8 @@ const GraphView = ({ initialNodes, initialEdges, onNoteClick, onSave }) => {
           }
         });
 
-        nextNodes.forEach(n => {
+        // Apply damping, center force, and update positions
+        currentNodes.forEach(n => {
           if (n.id === draggingNodeId) return;
 
           n.vx -= n.x * centerForce;
@@ -578,16 +616,27 @@ const GraphView = ({ initialNodes, initialEdges, onNoteClick, onSave }) => {
 
           n.x += n.vx;
           n.y += n.vy;
+
+          // Update metadata
+          nextMeta[n.id] = {
+            x: n.x,
+            y: n.y,
+            vx: n.vx,
+            vy: n.vy,
+            radius: n.radius
+          };
         });
 
-        return nextNodes;
+        return nextMeta;
       });
+
       animationRef.current = requestAnimationFrame(simulate);
     };
-    
+
     animationRef.current = requestAnimationFrame(simulate);
     return () => cancelAnimationFrame(animationRef.current);
-  }, [edges, draggingNodeId]);
+  }, [edges, draggingNodeId, nodes]);
+
 
   const getMouseCanvasPos = useCallback((e) => {
     if (!containerRef.current) return { x: 0, y: 0 };
@@ -730,36 +779,60 @@ const GraphView = ({ initialNodes, initialEdges, onNoteClick, onSave }) => {
     setConnectionStartId(null);
   };
 
-  const handleDoubleClick = (e) => {
+  const handleDoubleClick = async (e) => {
     if (e.target !== containerRef.current && !e.target.classList.contains('transform-layer')) return;
 
     const canvasPos = getMouseCanvasPos(e);
     
-    const newId = Math.random().toString(36).substr(2, 9);
-    const newNode = {
-      id: newId,
-      label: 'New Note',
-      x: canvasPos.x,
-      y: canvasPos.y,
-      vx: 0, 
-      vy: 0,
-      radius: 8,
-      lastVisited: Date.now()
-    };
-    setNodes(prev => [...prev, newNode]);
+    try {
+      // Create actual note via context
+      const newNote = await createNote({
+        title: 'New Note',
+        rawText: '',
+        content: { type: 'doc', content: [] }
+      });
+      
+      // Store visualization metadata
+      setGraphMetadata(prev => ({
+        ...prev,
+        [newNote.id]: {
+          x: canvasPos.x,
+          y: canvasPos.y,
+          vx: 0,
+          vy: 0,
+          radius: 8
+        }
+      }));
+      
+      setSelectedIds(new Set([newNote.id]));
+    } catch (error) {
+      console.error('Failed to create note:', error);
+    }
   };
 
-  const deleteSelection = useCallback(() => {
+  const deleteSelection = useCallback(async () => {
     if (selectedIds.size === 0 || renamingNodeId) return;
     
-    setNodes(prev => prev.filter(n => !selectedIds.has(n.id)));
+    // Delete edges
     setEdges(prev => prev.filter(e => 
       !selectedIds.has(e.id) && 
       !selectedIds.has(e.source) && 
       !selectedIds.has(e.target)
     ));
+    
+    // Delete actual notes via context
+    for (const id of selectedIds) {
+      if (nodes.some(n => n.id === id)) {
+        try {
+          await deleteNote(id);
+        } catch (error) {
+          console.error('Failed to delete note:', error);
+        }
+      }
+    }
+    
     setSelectedIds(new Set());
-  }, [selectedIds, renamingNodeId]);
+  }, [selectedIds, renamingNodeId, deleteNote, nodes]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -1747,18 +1820,44 @@ const CanvasView = ({ onBack, conceptName, conceptId, initialData, onSave }) => 
 export default function MessyMap() {
   const navigate = useNavigate();
   const { folderId } = useParams();
-  
-  const [currentView, setCurrentView] = useState('GRAPH');
+
+  // --- VIEW STATE ---
+  const [currentView, setCurrentView] = useState('GRAPH'); // 'GRAPH' or 'CANVAS'
   const [activeNote, setActiveNote] = useState(null);
 
-  const [graphNodes, setGraphNodes] = useState([]);
+  // --- GRAPH STATE ---
+  const [graphNodes, setGraphNodes] = useState([]);       // raw nodes from API
+  const [graphEdges, setGraphEdges] = useState([]);       // edges from API
+  const [graphMetadata, setGraphMetadata] = useState({}); // physics positions & velocities
+
+  // --- OTHER STATE ---
+  const [noteDataMap, setNoteDataMap] = useState({});
   const [loading, setLoading] = useState(true);
 
+  const animationRef = useRef(null); // for requestAnimationFrame
+
+  // --- LOAD GRAPH DATA ON MOUNT ---
   useEffect(() => {
     const loadGraphData = async () => {
       try {
         const res = await axios.get(`${API}/api/graph`, { withCredentials: true });
-        setGraphNodes(res.data.nodes || []);
+
+        const nodes = res.data.nodes || [];
+        setGraphNodes(nodes);
+
+        // Initialize metadata from nodes
+        const metadata = {};
+        nodes.forEach(node => {
+          metadata[node.id] = {
+            x: node.x ?? 0,
+            y: node.y ?? 0,
+            vx: node.vx || 0,
+            vy: node.vy || 0,
+            radius: node.radius || 8
+          };
+        });
+        setGraphMetadata(metadata);
+
         setGraphEdges(res.data.edges || []);
       } catch (error) {
         console.error('Failed to load graph:', error);
@@ -1766,16 +1865,9 @@ export default function MessyMap() {
         setLoading(false);
       }
     };
-    
+
     loadGraphData();
   }, []);
-  
-  const [graphEdges, setGraphEdges] = useState([
-    { id: 'e1', source: '1', target: '3' },
-    { id: 'e2', source: '1', target: '4' },
-  ]);
-
-  const [noteDataMap, setNoteDataMap] = useState({});
 
   const handleNoteClick = (id, name) => {
     setActiveNote({ id, name });
@@ -1787,11 +1879,20 @@ export default function MessyMap() {
     setActiveNote(null);
   };
   
-  const handleGraphSave = async (nodes, edges) => {
-    setGraphNodes(nodes);
+  const handleGraphSave = useCallback(async (metadata, edges) => {
+    setGraphMetadata(metadata);
     setGraphEdges(edges);
     
     try {
+      // Build nodes array for API (includes note data + metadata)
+      const nodes = notes
+        .filter(n => !n.archived)
+        .map(note => ({
+          id: note.id,
+          label: note.title,
+          ...(metadata[note.id] || {})
+        }));
+        
       await axios.post(`${API}/api/graph`, 
         { nodes, edges }, 
         { withCredentials: true }
@@ -1799,7 +1900,7 @@ export default function MessyMap() {
     } catch (error) {
       console.error('Failed to save graph:', error);
     }
-  };
+  }, [notes]);
 
   const handleCanvasSave = async (id, data) => {
     setNoteDataMap(prev => ({
@@ -1821,7 +1922,7 @@ export default function MessyMap() {
     <>
       {currentView === 'GRAPH' ? (
         <GraphView 
-          initialNodes={graphNodes} 
+          initialMetadata={graphMetadata}
           initialEdges={graphEdges} 
           onNoteClick={handleNoteClick}
           onSave={handleGraphSave}

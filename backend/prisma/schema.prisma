@@ -122,8 +122,7 @@ model Graph {
   id        String   @id @default(uuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  nodes     Json
-  edges     Json
+  metadata  Json     // Store only x, y, vx, vy, radius per noteId
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

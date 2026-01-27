@@ -1296,58 +1296,42 @@ app.post('/api/refresh-token', auth, async (req, res) => {
  */
 app.get('/api/graph', auth, async (req, res) => {
   try {
-    // Try to get existing graph
+    // Get all non-archived notes for this user
+    const notes = await prisma.note.findMany({
+      where: { 
+        userId: req.userId,
+        archived: { not: true }
+      },
+      select: { id: true, title: true, createdAt: true, updatedAt: true }
+    });
+
+    // Get graph metadata
     let graph = await prisma.graph.findUnique({
       where: { userId: req.userId }
     });
 
-    // If no graph exists, create one from existing folders
-    if (!graph) {
-      const folders = await prisma.folder.findMany({
-        where: { userId: req.userId },
-        select: { 
-          id: true, 
-          name: true, 
-          parentId: true,
-          createdAt: true 
-        }
-      });
-
-      // Create nodes from folders with physics properties
-      const nodes = folders.map((folder, index) => ({
-        id: folder.id,
-        label: folder.name,
-        x: Math.cos(index * 0.5) * 200,
-        y: Math.sin(index * 0.5) * 200,
-        vx: 0,
-        vy: 0,
-        radius: 10,
-        lastVisited: folder.createdAt.getTime()
-      }));
-
-      // Create edges from parent-child relationships
-      const edges = folders
-        .filter(f => f.parentId)
-        .map(f => ({
-          id: `${f.parentId}-${f.id}`,
-          source: f.parentId,
-          target: f.id
-        }));
-
-      // Create the graph
-      graph = await prisma.graph.create({
-        data: {
-          userId: req.userId,
-          nodes,
-          edges
-        }
-      });
-    }
-
-    res.json({
-      nodes: graph.nodes,
-      edges: graph.edges
+    // Initialize metadata if it doesn't exist
+    const metadata = graph?.metadata || {};
+    
+    // Build nodes from actual notes + metadata
+    const nodes = notes.map((note, index) => {
+      const meta = metadata[note.id] || {};
+      return {
+        id: note.id,
+        label: note.title,
+        x: meta.x ?? Math.cos(index * 0.5) * 200,
+        y: meta.y ?? Math.sin(index * 0.5) * 200,
+        vx: meta.vx ?? 0,
+        vy: meta.vy ?? 0,
+        radius: meta.radius ?? 8,
+        lastVisited: new Date(note.updatedAt).getTime()
+      };
     });
+
+    // Build edges - keep existing logic
+    const edges = graph?.edges || [];
+
+    res.json({ nodes, edges });
   } catch (error) {
     console.error('Get graph error:', error);
     res.status(500).json({ error: 'Failed to load graph' });
@@ -1363,34 +1347,40 @@ app.post('/api/graph', auth, async (req, res) => {
   try {
     const { nodes, edges } = req.body;
 
-    // Validate input
     if (!Array.isArray(nodes) || !Array.isArray(edges)) {
       return res.status(400).json({ 
         error: 'Invalid input: nodes and edges must be arrays' 
       });
     }
 
+    // Extract only visualization metadata from nodes
+    const metadata = {};
+    nodes.forEach(node => {
+      metadata[node.id] = {
+        x: node.x,
+        y: node.y,
+        vx: node.vx || 0,
+        vy: node.vy || 0,
+        radius: node.radius || 8
+      };
+    });
+
     // Upsert the graph
     const graph = await prisma.graph.upsert({
       where: { userId: req.userId },
       update: {
-        nodes,
+        metadata,
         edges,
         updatedAt: new Date()
       },
       create: {
         userId: req.userId,
-        nodes,
-        edges
+        metadata,
+        edges: edges || []
       }
     });
 
-    res.json({
-      success: true,
-      nodes: graph.nodes,
-      edges: graph.edges,
-      updatedAt: graph.updatedAt
-    });
+    res.json({ success: true });
   } catch (error) {
     console.error('Save graph error:', error);
     res.status(500).json({ error: 'Failed to save graph' });
@@ -1442,24 +1432,36 @@ app.delete('/api/graph/nodes/:nodeId', auth, async (req, res) => {
   try {
     const { nodeId } = req.params;
 
+    // Delete the actual note (this will cascade to links, annotations)
+    const note = await prisma.note.findUnique({
+      where: { id: nodeId },
+      select: { userId: true }
+    });
+
+    if (!note || note.userId !== req.userId) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+
+    await prisma.note.delete({ where: { id: nodeId } });
+
+    // Update graph metadata
     const graph = await prisma.graph.findUnique({
       where: { userId: req.userId }
     });
 
-    if (!graph) {
-      return res.status(404).json({ error: 'Graph not found' });
+    if (graph) {
+      const metadata = graph.metadata || {};
+      delete metadata[nodeId];
+      
+      const edges = (graph.edges || []).filter(
+        edge => edge.source !== nodeId && edge.target !== nodeId
+      );
+
+      await prisma.graph.update({
+        where: { userId: req.userId },
+        data: { metadata, edges }
+      });
     }
-
-    // Remove node and related edges
-    const nodes = graph.nodes.filter(node => node.id !== nodeId);
-    const edges = graph.edges.filter(
-      edge => edge.source !== nodeId && edge.target !== nodeId
-    );
-
-    await prisma.graph.update({
-      where: { userId: req.userId },
-      data: { nodes, edges }
-    });
 
     res.json({ success: true, deletedNodeId: nodeId });
   } catch (error) {
@@ -1803,79 +1805,5 @@ app.get('/api/canvas/list', auth, async (req, res) => {
   } catch (error) {
     console.error('List canvases error:', error);
     res.status(500).json({ error: 'Failed to list canvases' });
-  }
-});
-
-/**
- * POST /api/graph/sync-folders
- * Sync graph nodes with actual folders (useful after folder CRUD operations)
- */
-app.post('/api/graph/sync-folders', auth, async (req, res) => {
-  try {
-    const folders = await prisma.folder.findMany({
-      where: { userId: req.userId },
-      select: { 
-        id: true, 
-        name: true, 
-        parentId: true,
-        createdAt: true 
-      }
-    });
-
-    const graph = await prisma.graph.findUnique({
-      where: { userId: req.userId }
-    });
-
-    if (!graph) {
-      return res.status(404).json({ error: 'Graph not found. Create one first.' });
-    }
-
-    // Get existing node positions
-    const existingPositions = new Map(
-      graph.nodes.map(n => [n.id, { x: n.x, y: n.y, vx: n.vx, vy: n.vy }])
-    );
-
-    // Sync nodes
-    const nodes = folders.map((folder, index) => {
-      const existing = existingPositions.get(folder.id);
-      return {
-        id: folder.id,
-        label: folder.name,
-        x: existing?.x ?? Math.cos(index * 0.5) * 200,
-        y: existing?.y ?? Math.sin(index * 0.5) * 200,
-        vx: existing?.vx ?? 0,
-        vy: existing?.vy ?? 0,
-        radius: 10,
-        lastVisited: folder.createdAt.getTime()
-      };
-    });
-
-    // Sync edges (parent-child relationships)
-    const edges = folders
-      .filter(f => f.parentId)
-      .map(f => ({
-        id: `${f.parentId}-${f.id}`,
-        source: f.parentId,
-        target: f.id
-      }));
-
-    // Update graph
-    const updatedGraph = await prisma.graph.update({
-      where: { userId: req.userId },
-      data: { nodes, edges }
-    });
-
-    res.json({
-      success: true,
-      synced: {
-        nodes: nodes.length,
-        edges: edges.length
-      },
-      added: nodes.length - graph.nodes.length,
-      removed: graph.nodes.length - nodes.length
-    });
-  } catch (error) {
-    console.error('Sync folders error:', error);
-    res.status(500).json({ error: 'Failed to sync folders' });
   }
 });
