@@ -1285,3 +1285,597 @@ app.post('/api/refresh-token', auth, async (req, res) => {
     res.status(500).json({ error: 'Failed to refresh token' });
   }
 });
+// =============================================================================
+// GRAPH ENDPOINTS - Folder Navigation Graph
+// =============================================================================
+
+/**
+ * GET /api/graph
+ * Get the user's folder navigation graph
+ * Returns the saved graph or initializes a new one with existing folders
+ */
+app.get('/api/graph', auth, async (req, res) => {
+  try {
+    // Try to get existing graph
+    let graph = await prisma.graph.findUnique({
+      where: { userId: req.userId }
+    });
+
+    // If no graph exists, create one from existing folders
+    if (!graph) {
+      const folders = await prisma.folder.findMany({
+        where: { userId: req.userId },
+        select: { 
+          id: true, 
+          name: true, 
+          parentId: true,
+          createdAt: true 
+        }
+      });
+
+      // Create nodes from folders with physics properties
+      const nodes = folders.map((folder, index) => ({
+        id: folder.id,
+        label: folder.name,
+        x: Math.cos(index * 0.5) * 200,
+        y: Math.sin(index * 0.5) * 200,
+        vx: 0,
+        vy: 0,
+        radius: 10,
+        lastVisited: folder.createdAt.getTime()
+      }));
+
+      // Create edges from parent-child relationships
+      const edges = folders
+        .filter(f => f.parentId)
+        .map(f => ({
+          id: `${f.parentId}-${f.id}`,
+          source: f.parentId,
+          target: f.id
+        }));
+
+      // Create the graph
+      graph = await prisma.graph.create({
+        data: {
+          userId: req.userId,
+          nodes,
+          edges
+        }
+      });
+    }
+
+    res.json({
+      nodes: graph.nodes,
+      edges: graph.edges
+    });
+  } catch (error) {
+    console.error('Get graph error:', error);
+    res.status(500).json({ error: 'Failed to load graph' });
+  }
+});
+
+/**
+ * POST /api/graph
+ * Save the user's folder navigation graph
+ * Expects: { nodes: [], edges: [] }
+ */
+app.post('/api/graph', auth, async (req, res) => {
+  try {
+    const { nodes, edges } = req.body;
+
+    // Validate input
+    if (!Array.isArray(nodes) || !Array.isArray(edges)) {
+      return res.status(400).json({ 
+        error: 'Invalid input: nodes and edges must be arrays' 
+      });
+    }
+
+    // Upsert the graph
+    const graph = await prisma.graph.upsert({
+      where: { userId: req.userId },
+      update: {
+        nodes,
+        edges,
+        updatedAt: new Date()
+      },
+      create: {
+        userId: req.userId,
+        nodes,
+        edges
+      }
+    });
+
+    res.json({
+      success: true,
+      nodes: graph.nodes,
+      edges: graph.edges,
+      updatedAt: graph.updatedAt
+    });
+  } catch (error) {
+    console.error('Save graph error:', error);
+    res.status(500).json({ error: 'Failed to save graph' });
+  }
+});
+
+/**
+ * PUT /api/graph/nodes/:nodeId
+ * Update a single node in the graph (for updating lastVisited)
+ */
+app.put('/api/graph/nodes/:nodeId', auth, async (req, res) => {
+  try {
+    const { nodeId } = req.params;
+    const updates = req.body; // e.g., { lastVisited: timestamp }
+
+    const graph = await prisma.graph.findUnique({
+      where: { userId: req.userId }
+    });
+
+    if (!graph) {
+      return res.status(404).json({ error: 'Graph not found' });
+    }
+
+    // Update the specific node
+    const nodes = graph.nodes.map(node => 
+      node.id === nodeId ? { ...node, ...updates } : node
+    );
+
+    const updatedGraph = await prisma.graph.update({
+      where: { userId: req.userId },
+      data: { nodes }
+    });
+
+    res.json({
+      success: true,
+      node: nodes.find(n => n.id === nodeId)
+    });
+  } catch (error) {
+    console.error('Update node error:', error);
+    res.status(500).json({ error: 'Failed to update node' });
+  }
+});
+
+/**
+ * DELETE /api/graph/nodes/:nodeId
+ * Remove a node and its edges from the graph
+ */
+app.delete('/api/graph/nodes/:nodeId', auth, async (req, res) => {
+  try {
+    const { nodeId } = req.params;
+
+    const graph = await prisma.graph.findUnique({
+      where: { userId: req.userId }
+    });
+
+    if (!graph) {
+      return res.status(404).json({ error: 'Graph not found' });
+    }
+
+    // Remove node and related edges
+    const nodes = graph.nodes.filter(node => node.id !== nodeId);
+    const edges = graph.edges.filter(
+      edge => edge.source !== nodeId && edge.target !== nodeId
+    );
+
+    await prisma.graph.update({
+      where: { userId: req.userId },
+      data: { nodes, edges }
+    });
+
+    res.json({ success: true, deletedNodeId: nodeId });
+  } catch (error) {
+    console.error('Delete node error:', error);
+    res.status(500).json({ error: 'Failed to delete node' });
+  }
+});
+
+// =============================================================================
+// CANVAS ENDPOINTS - Folder Content Canvas
+// =============================================================================
+
+/**
+ * GET /api/canvas/:folderId
+ * Get canvas data for a specific folder
+ */
+app.get('/api/canvas/:folderId', auth, async (req, res) => {
+  try {
+    const { folderId } = req.params;
+
+    // Verify folder belongs to user
+    const folder = await prisma.folder.findUnique({
+      where: { id: folderId },
+      select: { userId: true, name: true }
+    });
+
+    if (!folder || folder.userId !== req.userId) {
+      return res.status(404).json({ error: 'Folder not found' });
+    }
+
+    // Try to get existing canvas
+    let canvas = await prisma.canvas.findUnique({
+      where: { folderId }
+    });
+
+    // If no canvas exists, create an empty one
+    if (!canvas) {
+      canvas = await prisma.canvas.create({
+        data: {
+          folderId,
+          userId: req.userId,
+          nodes: [],
+          edges: []
+        }
+      });
+    }
+
+    res.json({
+      folderId,
+      folderName: folder.name,
+      nodes: canvas.nodes,
+      edges: canvas.edges,
+      updatedAt: canvas.updatedAt
+    });
+  } catch (error) {
+    console.error('Get canvas error:', error);
+    res.status(500).json({ error: 'Failed to load canvas' });
+  }
+});
+
+/**
+ * POST /api/canvas/:folderId
+ * Save canvas data for a specific folder
+ * Expects: { nodes: [], edges: [] }
+ */
+app.post('/api/canvas/:folderId', auth, async (req, res) => {
+  try {
+    const { folderId } = req.params;
+    const { nodes, edges } = req.body;
+
+    // Validate input
+    if (!Array.isArray(nodes) || !Array.isArray(edges)) {
+      return res.status(400).json({ 
+        error: 'Invalid input: nodes and edges must be arrays' 
+      });
+    }
+
+    // Verify folder belongs to user
+    const folder = await prisma.folder.findUnique({
+      where: { id: folderId },
+      select: { userId: true }
+    });
+
+    if (!folder || folder.userId !== req.userId) {
+      return res.status(404).json({ error: 'Folder not found' });
+    }
+
+    // Upsert the canvas
+    const canvas = await prisma.canvas.upsert({
+      where: { folderId },
+      update: {
+        nodes,
+        edges,
+        updatedAt: new Date()
+      },
+      create: {
+        folderId,
+        userId: req.userId,
+        nodes,
+        edges
+      }
+    });
+
+    res.json({
+      success: true,
+      folderId,
+      nodes: canvas.nodes,
+      edges: canvas.edges,
+      updatedAt: canvas.updatedAt
+    });
+  } catch (error) {
+    console.error('Save canvas error:', error);
+    res.status(500).json({ error: 'Failed to save canvas' });
+  }
+});
+
+/**
+ * PUT /api/canvas/:folderId/nodes/:nodeId
+ * Update a single node in a canvas
+ */
+app.put('/api/canvas/:folderId/nodes/:nodeId', auth, async (req, res) => {
+  try {
+    const { folderId, nodeId } = req.params;
+    const updates = req.body;
+
+    const canvas = await prisma.canvas.findUnique({
+      where: { folderId },
+      include: { folder: { select: { userId: true } } }
+    });
+
+    if (!canvas || canvas.folder.userId !== req.userId) {
+      return res.status(404).json({ error: 'Canvas not found' });
+    }
+
+    // Update the specific node
+    const nodes = canvas.nodes.map(node => 
+      node.id === nodeId ? { ...node, ...updates } : node
+    );
+
+    const updatedCanvas = await prisma.canvas.update({
+      where: { folderId },
+      data: { nodes }
+    });
+
+    res.json({
+      success: true,
+      node: nodes.find(n => n.id === nodeId)
+    });
+  } catch (error) {
+    console.error('Update canvas node error:', error);
+    res.status(500).json({ error: 'Failed to update canvas node' });
+  }
+});
+
+/**
+ * DELETE /api/canvas/:folderId/nodes/:nodeId
+ * Delete a node from a canvas
+ */
+app.delete('/api/canvas/:folderId/nodes/:nodeId', auth, async (req, res) => {
+  try {
+    const { folderId, nodeId } = req.params;
+
+    const canvas = await prisma.canvas.findUnique({
+      where: { folderId },
+      include: { folder: { select: { userId: true } } }
+    });
+
+    if (!canvas || canvas.folder.userId !== req.userId) {
+      return res.status(404).json({ error: 'Canvas not found' });
+    }
+
+    // Remove node and related edges
+    const nodes = canvas.nodes.filter(node => node.id !== nodeId);
+    const edges = canvas.edges.filter(
+      edge => edge.fromNode !== nodeId && edge.toNode !== nodeId
+    );
+
+    await prisma.canvas.update({
+      where: { folderId },
+      data: { nodes, edges }
+    });
+
+    res.json({ success: true, deletedNodeId: nodeId });
+  } catch (error) {
+    console.error('Delete canvas node error:', error);
+    res.status(500).json({ error: 'Failed to delete canvas node' });
+  }
+});
+
+/**
+ * DELETE /api/canvas/:folderId
+ * Delete entire canvas (resets to empty state)
+ */
+app.delete('/api/canvas/:folderId', auth, async (req, res) => {
+  try {
+    const { folderId } = req.params;
+
+    const canvas = await prisma.canvas.findUnique({
+      where: { folderId },
+      include: { folder: { select: { userId: true } } }
+    });
+
+    if (!canvas || canvas.folder.userId !== req.userId) {
+      return res.status(404).json({ error: 'Canvas not found' });
+    }
+
+    // Reset to empty canvas
+    await prisma.canvas.update({
+      where: { folderId },
+      data: {
+        nodes: [],
+        edges: []
+      }
+    });
+
+    res.json({ success: true, folderId });
+  } catch (error) {
+    console.error('Clear canvas error:', error);
+    res.status(500).json({ error: 'Failed to clear canvas' });
+  }
+});
+
+// =============================================================================
+// BATCH OPERATIONS - For performance
+// =============================================================================
+
+/**
+ * POST /api/canvas/:folderId/batch
+ * Perform multiple operations on a canvas in one request
+ * Expects: { operations: [{type: 'add'|'update'|'delete', nodeId?, data?}, ...] }
+ */
+app.post('/api/canvas/:folderId/batch', auth, async (req, res) => {
+  try {
+    const { folderId } = req.params;
+    const { operations } = req.body;
+
+    if (!Array.isArray(operations)) {
+      return res.status(400).json({ error: 'operations must be an array' });
+    }
+
+    const canvas = await prisma.canvas.findUnique({
+      where: { folderId },
+      include: { folder: { select: { userId: true } } }
+    });
+
+    if (!canvas || canvas.folder.userId !== req.userId) {
+      return res.status(404).json({ error: 'Canvas not found' });
+    }
+
+    let nodes = [...canvas.nodes];
+    let edges = [...canvas.edges];
+
+    // Process operations
+    for (const op of operations) {
+      switch (op.type) {
+        case 'add':
+          if (op.node) nodes.push(op.node);
+          if (op.edge) edges.push(op.edge);
+          break;
+        
+        case 'update':
+          if (op.nodeId && op.data) {
+            nodes = nodes.map(n => 
+              n.id === op.nodeId ? { ...n, ...op.data } : n
+            );
+          }
+          if (op.edgeId && op.data) {
+            edges = edges.map(e => 
+              e.id === op.edgeId ? { ...e, ...op.data } : e
+            );
+          }
+          break;
+        
+        case 'delete':
+          if (op.nodeId) {
+            nodes = nodes.filter(n => n.id !== op.nodeId);
+            edges = edges.filter(e => 
+              e.fromNode !== op.nodeId && e.toNode !== op.nodeId
+            );
+          }
+          if (op.edgeId) {
+            edges = edges.filter(e => e.id !== op.edgeId);
+          }
+          break;
+      }
+    }
+
+    // Save updated canvas
+    const updatedCanvas = await prisma.canvas.update({
+      where: { folderId },
+      data: { nodes, edges }
+    });
+
+    res.json({
+      success: true,
+      processed: operations.length,
+      nodes: updatedCanvas.nodes,
+      edges: updatedCanvas.edges
+    });
+  } catch (error) {
+    console.error('Batch canvas operation error:', error);
+    res.status(500).json({ error: 'Failed to execute batch operations' });
+  }
+});
+
+// =============================================================================
+// UTILITY ENDPOINTS
+// =============================================================================
+
+/**
+ * GET /api/canvas/list
+ * List all canvases for the user (for migration or debugging)
+ */
+app.get('/api/canvas/list', auth, async (req, res) => {
+  try {
+    const canvases = await prisma.canvas.findMany({
+      where: { userId: req.userId },
+      include: {
+        folder: {
+          select: { id: true, name: true }
+        }
+      },
+      select: {
+        id: true,
+        folderId: true,
+        folder: true,
+        updatedAt: true,
+        nodes: false,
+        edges: false
+      }
+    });
+
+    const summary = canvases.map(c => ({
+      canvasId: c.id,
+      folderId: c.folderId,
+      folderName: c.folder.name,
+      lastUpdated: c.updatedAt
+    }));
+
+    res.json({ canvases: summary, total: canvases.length });
+  } catch (error) {
+    console.error('List canvases error:', error);
+    res.status(500).json({ error: 'Failed to list canvases' });
+  }
+});
+
+/**
+ * POST /api/graph/sync-folders
+ * Sync graph nodes with actual folders (useful after folder CRUD operations)
+ */
+app.post('/api/graph/sync-folders', auth, async (req, res) => {
+  try {
+    const folders = await prisma.folder.findMany({
+      where: { userId: req.userId },
+      select: { 
+        id: true, 
+        name: true, 
+        parentId: true,
+        createdAt: true 
+      }
+    });
+
+    const graph = await prisma.graph.findUnique({
+      where: { userId: req.userId }
+    });
+
+    if (!graph) {
+      return res.status(404).json({ error: 'Graph not found. Create one first.' });
+    }
+
+    // Get existing node positions
+    const existingPositions = new Map(
+      graph.nodes.map(n => [n.id, { x: n.x, y: n.y, vx: n.vx, vy: n.vy }])
+    );
+
+    // Sync nodes
+    const nodes = folders.map((folder, index) => {
+      const existing = existingPositions.get(folder.id);
+      return {
+        id: folder.id,
+        label: folder.name,
+        x: existing?.x ?? Math.cos(index * 0.5) * 200,
+        y: existing?.y ?? Math.sin(index * 0.5) * 200,
+        vx: existing?.vx ?? 0,
+        vy: existing?.vy ?? 0,
+        radius: 10,
+        lastVisited: folder.createdAt.getTime()
+      };
+    });
+
+    // Sync edges (parent-child relationships)
+    const edges = folders
+      .filter(f => f.parentId)
+      .map(f => ({
+        id: `${f.parentId}-${f.id}`,
+        source: f.parentId,
+        target: f.id
+      }));
+
+    // Update graph
+    const updatedGraph = await prisma.graph.update({
+      where: { userId: req.userId },
+      data: { nodes, edges }
+    });
+
+    res.json({
+      success: true,
+      synced: {
+        nodes: nodes.length,
+        edges: edges.length
+      },
+      added: nodes.length - graph.nodes.length,
+      removed: graph.nodes.length - nodes.length
+    });
+  } catch (error) {
+    console.error('Sync folders error:', error);
+    res.status(500).json({ error: 'Failed to sync folders' });
+  }
+});

@@ -17,6 +17,9 @@ model User {
   notes    Note[]
   folders  Folder[]
   clusters Cluster[]
+
+  graphs   Graph[]
+  canvases Canvas[]
 }
 
 model Folder {
@@ -29,6 +32,7 @@ model Folder {
   parent   Folder? @relation("FolderTree", fields: [parentId], references: [id])
   children Folder[] @relation("FolderTree")
   notes    Note[]
+  canvas Canvas?
 
   @@index([userId])
   @@index([parentId])
@@ -112,4 +116,33 @@ model Cluster {
   notes  Note[] @relation("NoteClusters")
 
   @@unique([name, userId])
+}
+
+model Graph {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nodes     Json
+  edges     Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId])
+  @@index([userId])
+}
+
+model Canvas {
+  id        String   @id @default(uuid())
+  folderId  String
+  folder    Folder   @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nodes     Json
+  edges     Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([folderId])
+  @@index([userId])
+  @@index([folderId])
 }

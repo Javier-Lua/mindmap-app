@@ -679,6 +679,8 @@ function MainLayout({ user }) {
           <Route path="/dashboard" element={<Dashboard user={user} />} />
           <Route path="/mindmap" element={<MessyMap />} />
           <Route path="/mindmap/:folderId" element={<MessyMap />} />
+          <Route path="/map" element={<MessyMap />} />
+          <Route path="/map/:folderId" element={<MessyMap />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
