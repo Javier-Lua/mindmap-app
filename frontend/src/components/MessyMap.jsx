@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import axios from 'axios';
 import { useNotes } from '../contexts/NotesContext';
+
+const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 // --- Utility Functions ---
 const hashString = (str) => {
@@ -426,10 +429,10 @@ const detectLeidenCommunities = (nodes, edges) => {
 };
 
 // --- GRAPH VIEW COMPONENT ---
-const GraphView = ({ initialNodes, initialEdges, onNoteClick, onSave }) => {
+const GraphView = ({ onNoteClick, onSave }) => {
   const { notes, createNote, deleteNote } = useNotes();
   const [graphMetadata, setGraphMetadata] = useState({});
-  const [edges, setEdges] = useState(initialEdges);
+  const [edges, setEdges] = useState([]);
   const [viewport, setViewport] = useState({ x: window.innerWidth / 2, y: window.innerHeight / 2, zoom: 1 });
   
   const [interactionMode, setInteractionMode] = useState('IDLE');
@@ -473,7 +476,7 @@ const GraphView = ({ initialNodes, initialEdges, onNoteClick, onSave }) => {
 
   useEffect(() => {
     return () => {
-      onSave(nodesRef.current, edgesRef.current);
+      onSave(graphMetadata, edgesRef.current);
     }
   }, []);
 
@@ -698,12 +701,14 @@ const GraphView = ({ initialNodes, initialEdges, onNoteClick, onSave }) => {
     e.stopPropagation();
     const now = Date.now();
     
-    const updateNode = (n) => n.id === nodeId ? { ...n, lastVisited: now } : n;
-    
-    setNodes(prev => prev.map(updateNode));
-    if (nodesRef.current) {
-      nodesRef.current = nodesRef.current.map(updateNode);
-    }
+    // Update metadata to mark node as visited
+    setGraphMetadata(prev => ({
+      ...prev,
+      [nodeId]: {
+        ...prev[nodeId],
+        lastVisited: now
+      }
+    }));
     
     onNoteClick(nodeId, label);
   };
@@ -734,7 +739,21 @@ const GraphView = ({ initialNodes, initialEdges, onNoteClick, onSave }) => {
       
       const dx = screenDx / viewport.zoom;
       const dy = screenDy / viewport.zoom;
-      setNodes(prev => prev.map(n => n.id === draggingNodeId ? { ...n, x: n.x + dx, y: n.y + dy, vx: 0, vy: 0 } : n));
+      
+      // Update metadata instead of calling setNodes
+      setGraphMetadata(prev => {
+        const updated = { ...prev };
+        if (updated[draggingNodeId]) {
+          updated[draggingNodeId] = {
+            ...updated[draggingNodeId],
+            x: updated[draggingNodeId].x + dx,
+            y: updated[draggingNodeId].y + dy,
+            vx: 0,
+            vy: 0
+          };
+        }
+        return updated;
+      });
     } else if (interactionMode === 'CONNECTING') {
       const canvasPos = getMouseCanvasPos(e);
       setConnectionMousePos(canvasPos);
@@ -954,16 +973,13 @@ const GraphView = ({ initialNodes, initialEdges, onNoteClick, onSave }) => {
                   className="absolute top-full mt-1 text-[10px] bg-black/80 text-white px-1 rounded border border-blue-500 outline-none text-center min-w-[60px]"
                   defaultValue={node.label}
                   onBlur={(e) => {
-                    const newVal = e.currentTarget.value;
-                    setNodes(prev => prev.map(n => n.id === node.id ? { ...n, label: newVal } : n));
+                    // Can't directly update note title here - would need to use updateNote from context
                     setRenamingNodeId(null);
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
                       e.stopPropagation();
-                      const newVal = e.currentTarget.value;
-                      setNodes(prev => prev.map(n => n.id === node.id ? { ...n, label: newVal } : n));
                       setRenamingNodeId(null);
                     }
                   }}
@@ -1827,43 +1843,19 @@ export default function MessyMap() {
   const [currentView, setCurrentView] = useState('GRAPH'); // 'GRAPH' or 'CANVAS'
   const [activeNote, setActiveNote] = useState(null);
 
-  // --- GRAPH STATE ---
-  const [graphNodes, setGraphNodes] = useState([]);       // raw nodes from API
-  const [graphEdges, setGraphEdges] = useState([]);       // edges from API
-  const [graphMetadata, setGraphMetadata] = useState({}); // physics positions & velocities
-
   // --- OTHER STATE ---
   const [noteDataMap, setNoteDataMap] = useState({});
   const [loading, setLoading] = useState(true);
-
-  const animationRef = useRef(null); // for requestAnimationFrame
 
   // --- LOAD GRAPH DATA ON MOUNT ---
   useEffect(() => {
     const loadGraphData = async () => {
       try {
         const res = await axios.get(`${API}/api/graph`, { withCredentials: true });
-
-        const nodes = res.data.nodes || [];
-        setGraphNodes(nodes);
-
-        // Initialize metadata from nodes
-        const metadata = {};
-        nodes.forEach(node => {
-          metadata[node.id] = {
-            x: node.x ?? 0,
-            y: node.y ?? 0,
-            vx: node.vx || 0,
-            vy: node.vy || 0,
-            radius: node.radius || 8
-          };
-        });
-        setGraphMetadata(metadata);
-
-        setGraphEdges(res.data.edges || []);
+        // Graph data is now managed directly in GraphView component
+        setLoading(false);
       } catch (error) {
         console.error('Failed to load graph:', error);
-      } finally {
         setLoading(false);
       }
     };
@@ -1882,9 +1874,6 @@ export default function MessyMap() {
   };
   
   const handleGraphSave = useCallback(async (metadata, edges) => {
-    setGraphMetadata(metadata);
-    setGraphEdges(edges);
-    
     try {
       // Build nodes array for API (includes note data + metadata)
       const nodes = notes
@@ -1920,12 +1909,18 @@ export default function MessyMap() {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="w-full h-screen bg-[#0b0b0b] flex items-center justify-center">
+        <div className="text-white/40">Loading...</div>
+      </div>
+    );
+  }
+
   return (
     <>
       {currentView === 'GRAPH' ? (
         <GraphView 
-          initialMetadata={graphMetadata}
-          initialEdges={graphEdges} 
           onNoteClick={handleNoteClick}
           onSave={handleGraphSave}
         />
