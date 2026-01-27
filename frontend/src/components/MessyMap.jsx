@@ -425,7 +425,7 @@ const detectLeidenCommunities = (nodes, edges) => {
 };
 
 // --- GRAPH VIEW COMPONENT ---
-const GraphView = ({ initialNodes, initialEdges, onFolderClick, onSave }) => {
+const GraphView = ({ initialNodes, initialEdges, onNoteClick, onSave }) => {
   const [nodes, setNodes] = useState(initialNodes);
   const [edges, setEdges] = useState(initialEdges);
   const [viewport, setViewport] = useState({ x: window.innerWidth / 2, y: window.innerHeight / 2, zoom: 1 });
@@ -589,6 +589,17 @@ const GraphView = ({ initialNodes, initialEdges, onFolderClick, onSave }) => {
     return () => cancelAnimationFrame(animationRef.current);
   }, [edges, draggingNodeId]);
 
+  const getMouseCanvasPos = useCallback((e) => {
+    if (!containerRef.current) return { x: 0, y: 0 };
+    const rect = containerRef.current.getBoundingClientRect();
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+    return {
+      x: (screenX - viewport.x) / viewport.zoom,
+      y: (screenY - viewport.y) / viewport.zoom
+    };
+  }, [viewport]);
+
   const handleWheel = (e) => {
     e.preventDefault();
     const zoomSensitivity = 0.001;
@@ -644,7 +655,7 @@ const GraphView = ({ initialNodes, initialEdges, onFolderClick, onSave }) => {
       nodesRef.current = nodesRef.current.map(updateNode);
     }
     
-    onFolderClick(nodeId, label);
+    onNoteClick(nodeId, label);
   };
   
   const handleEdgeClick = (e, edgeId) => {
@@ -675,9 +686,8 @@ const GraphView = ({ initialNodes, initialEdges, onFolderClick, onSave }) => {
       const dy = screenDy / viewport.zoom;
       setNodes(prev => prev.map(n => n.id === draggingNodeId ? { ...n, x: n.x + dx, y: n.y + dy, vx: 0, vy: 0 } : n));
     } else if (interactionMode === 'CONNECTING') {
-      const canvasX = (e.clientX - viewport.x) / viewport.zoom;
-      const canvasY = (e.clientY - viewport.y) / viewport.zoom;
-      setConnectionMousePos({ x: canvasX, y: canvasY });
+      const canvasPos = getMouseCanvasPos(e);
+      setConnectionMousePos(canvasPos);
     } else if (interactionMode === 'PANNING') {
       setViewport(prev => ({
         ...prev,
@@ -689,13 +699,12 @@ const GraphView = ({ initialNodes, initialEdges, onFolderClick, onSave }) => {
 
   const handleMouseUp = (e) => {
     if (interactionMode === 'CONNECTING' && connectionStartId) {
-      const canvasX = (e.clientX - viewport.x) / viewport.zoom;
-      const canvasY = (e.clientY - viewport.y) / viewport.zoom;
+      const canvasPos = getMouseCanvasPos(e);
       
       const targetNode = nodes.find(n => {
         if (n.id === connectionStartId) return false; 
-        const dx = n.x - canvasX;
-        const dy = n.y - canvasY;
+        const dx = n.x - canvasPos.x;
+        const dy = n.y - canvasPos.y;
         return Math.sqrt(dx*dx + dy*dy) < n.radius * 2; 
       });
 
@@ -724,15 +733,14 @@ const GraphView = ({ initialNodes, initialEdges, onFolderClick, onSave }) => {
   const handleDoubleClick = (e) => {
     if (e.target !== containerRef.current && !e.target.classList.contains('transform-layer')) return;
 
-    const canvasX = (e.clientX - viewport.x) / viewport.zoom;
-    const canvasY = (e.clientY - viewport.y) / viewport.zoom;
+    const canvasPos = getMouseCanvasPos(e);
     
     const newId = Math.random().toString(36).substr(2, 9);
     const newNode = {
       id: newId,
-      label: 'New Folder',
-      x: canvasX,
-      y: canvasY,
+      label: 'New Note',
+      x: canvasPos.x,
+      y: canvasPos.y,
       vx: 0, 
       vy: 0,
       radius: 8,
@@ -778,8 +786,8 @@ const GraphView = ({ initialNodes, initialEdges, onFolderClick, onSave }) => {
       tabIndex={0}
     >
       <div className="absolute top-6 left-6 z-50 pointer-events-none select-none">
-        <h1 className="text-white/40 text-2xl font-bold tracking-tight">Graph View</h1>
-        <p className="text-white/20 text-xs mt-1">Double click empty space to create folder. Shift+Drag to link. Delete to remove.</p>
+        <h1 className="text-white/40 text-2xl font-bold tracking-tight">Note Graph</h1>
+        <p className="text-white/20 text-xs mt-1">Double click empty space to create note. Shift+Drag to link. Delete to remove.</p>
       </div>
 
       {selectedIds.size > 0 && (
@@ -920,7 +928,7 @@ const MAX_ZOOM = 4;
 const MIN_NODE_WIDTH = 100;
 const MIN_NODE_HEIGHT = 60;
 
-const CanvasView = ({ onBack, folderName, folderId, initialData, onSave }) => {
+const CanvasView = ({ onBack, conceptName, conceptId, initialData, onSave }) => {
   const [nodes, setNodes] = useState(initialData?.nodes || []);
   const [edges, setEdges] = useState(initialData?.edges || []);
 
@@ -954,23 +962,28 @@ const CanvasView = ({ onBack, folderName, folderId, initialData, onSave }) => {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      onSave(folderId, { nodes, edges });
+      onSave(conceptId, { nodes, edges });
     }, 500);
     return () => clearTimeout(timer);
-  }, [nodes, edges, onSave, folderId]);
+  }, [nodes, edges, onSave, conceptId]);
 
   useEffect(() => {
-    return () => onSave(folderId, { nodes: nodesRef.current, edges: edgesRef.current });
+    return () => onSave(conceptId, { nodes: nodesRef.current, edges: edgesRef.current });
   }, []);
 
-  const getMouseScreenPos = (e) => ({
-    x: e.clientX,
-    y: e.clientY
-  });
+  const getMouseScreenPos = useCallback((e) => {
+    if (!containerRef.current) return { x: 0, y: 0 };
+    const rect = containerRef.current.getBoundingClientRect();
+    return {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
+    };
+  }, []);
 
-  const getCanvasPos = (e) => {
-    return screenToCanvas(getMouseScreenPos(e), viewport);
-  };
+  const getCanvasPos = useCallback((e) => {
+    const screenPos = getMouseScreenPos(e);
+    return screenToCanvas(screenPos, viewport);
+  }, [getMouseScreenPos, viewport]);
 
   const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -1711,14 +1724,14 @@ const CanvasView = ({ onBack, folderName, folderId, initialData, onSave }) => {
           <span className="text-sm font-semibold">Back to Graph</span>
         </button>
         <div>
-          <h1 className="text-white/40 text-4xl font-bold tracking-tighter">{folderName || 'Canvas'}</h1>
-          <p className="text-white/10 text-sm mt-1">Double click to add notes.</p>
+          <h1 className="text-white/40 text-4xl font-bold tracking-tighter">{conceptName || 'Concept Map'}</h1>
+          <p className="text-white/10 text-sm mt-1">Double click to add concept cards.</p>
         </div>
       </div>
 
       <div className="absolute bottom-6 right-6 flex gap-2 ui-control pointer-events-auto z-50">
         <div className="bg-[#1e1e1e] border border-[#2e2e2e] rounded-md px-3 py-2 text-xs text-[#999999] shadow-lg">
-          Obsidian Canvas Clone
+          Concept Mindmap
         </div>
         <div className="bg-[#1e1e1e] border border-[#2e2e2e] rounded-md px-3 py-2 text-xs text-[#999999] shadow-lg flex gap-2">
           <button onClick={() => setViewport(v => ({...v, zoom: v.zoom - 0.1}))}>-</button>
@@ -1736,7 +1749,7 @@ export default function MessyMap() {
   const { folderId } = useParams();
   
   const [currentView, setCurrentView] = useState('GRAPH');
-  const [activeFolder, setActiveFolder] = useState(null);
+  const [activeNote, setActiveNote] = useState(null);
 
   const [graphNodes, setGraphNodes] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1762,16 +1775,16 @@ export default function MessyMap() {
     { id: 'e2', source: '1', target: '4' },
   ]);
 
-  const [folderDataMap, setFolderDataMap] = useState({});
+  const [noteDataMap, setNoteDataMap] = useState({});
 
-  const handleFolderClick = (id, name) => {
-    setActiveFolder({ id, name });
+  const handleNoteClick = (id, name) => {
+    setActiveNote({ id, name });
     setCurrentView('CANVAS');
   };
 
   const handleBackToGraph = () => {
     setCurrentView('GRAPH');
-    setActiveFolder(null);
+    setActiveNote(null);
   };
   
   const handleGraphSave = async (nodes, edges) => {
@@ -1789,7 +1802,7 @@ export default function MessyMap() {
   };
 
   const handleCanvasSave = async (id, data) => {
-    setFolderDataMap(prev => ({
+    setNoteDataMap(prev => ({
       ...prev,
       [id]: data
     }));
@@ -1810,15 +1823,15 @@ export default function MessyMap() {
         <GraphView 
           initialNodes={graphNodes} 
           initialEdges={graphEdges} 
-          onFolderClick={handleFolderClick}
+          onNoteClick={handleNoteClick}
           onSave={handleGraphSave}
         />
       ) : (
         <CanvasView 
           onBack={handleBackToGraph} 
-          folderName={activeFolder?.name || ''} 
-          folderId={activeFolder?.id || ''}
-          initialData={activeFolder ? folderDataMap[activeFolder.id] : undefined}
+          conceptName={activeNote?.name || ''} 
+          conceptId={activeNote?.id || ''}
+          initialData={activeNote ? noteDataMap[activeNote.id] : undefined}
           onSave={handleCanvasSave}
         />
       )}
