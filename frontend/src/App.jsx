@@ -457,14 +457,20 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout }) {
                   <span className="text-[10px] text-theme-tertiary">{folder._count?.notes || 0}</span>
                   <div className="opacity-0 group-hover:opacity-100 flex gap-1">
                     <div
-                      onClick={(e) => startEditFolder(folder, e)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startEditFolder(folder, e);
+                      }}
                       className="p-0.5 theme-bg-hover rounded cursor-pointer"
                       title="Rename"
                     >
                       <Edit3 size={10} className="text-blue-400" />
                     </div>
                     <div
-                      onClick={(e) => handleDeleteFolder(folder.id, e)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteFolder(folder.id, e);
+                      }}
                       className="p-0.5 theme-bg-hover rounded cursor-pointer"
                       title="Delete"
                     >
@@ -505,13 +511,16 @@ function Sidebar({ user, currentNoteId, onSelectNote, onNewNote, onLogout }) {
               </div>
               {note.sticky && <Star size={10} className="text-yellow-400" fill="currentColor" />}
               {note.ephemeral && <Zap size={10} className="text-theme-tertiary" />}
-              <button
-                onClick={(e) => handleDeleteNote(note.id, e)}
-                className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-600 rounded transition-opacity"
+              <div
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDeleteNote(note.id, e);
+                }}
+                className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-600 rounded transition-opacity cursor-pointer"
                 title="Delete"
               >
                 <Trash2 size={10} className="text-red-400" />
-              </button>
+              </div>
             </button>
           ))}
           

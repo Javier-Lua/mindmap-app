@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useNotes } from '../contexts/NotesContext';
 
 // --- Utility Functions ---
 const hashString = (str) => {
