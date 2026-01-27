@@ -430,7 +430,7 @@ const detectLeidenCommunities = (nodes, edges) => {
 
 // --- GRAPH VIEW COMPONENT ---
 const GraphView = ({ onNoteClick, onSave }) => {
-  const { notes, createNote, deleteNote } = useNotes();
+  const { notes, createNote, deleteNote, updateNote } = useNotes();
   const [graphMetadata, setGraphMetadata] = useState({});
   const [edges, setEdges] = useState([]);
   const [viewport, setViewport] = useState({ x: window.innerWidth / 2, y: window.innerHeight / 2, zoom: 1 });
@@ -972,14 +972,29 @@ const GraphView = ({ onNoteClick, onSave }) => {
                   autoFocus
                   className="absolute top-full mt-1 text-[10px] bg-black/80 text-white px-1 rounded border border-blue-500 outline-none text-center min-w-[60px]"
                   defaultValue={node.label}
-                  onBlur={(e) => {
-                    // Can't directly update note title here - would need to use updateNote from context
+                  onBlur={async (e) => {
+                    const newLabel = e.target.value.trim();
+                    if (newLabel && newLabel !== node.label) {
+                      try {
+                        await updateNote(node.id, { title: newLabel });
+                      } catch (error) {
+                        console.error('Failed to rename note:', error);
+                      }
+                    }
                     setRenamingNodeId(null);
                   }}
-                  onKeyDown={(e) => {
+                  onKeyDown={async (e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
                       e.stopPropagation();
+                      const newLabel = e.target.value.trim();
+                      if (newLabel && newLabel !== node.label) {
+                        try {
+                          await updateNote(node.id, { title: newLabel });
+                        } catch (error) {
+                          console.error('Failed to rename note:', error);
+                        }
+                      }
                       setRenamingNodeId(null);
                     }
                   }}
