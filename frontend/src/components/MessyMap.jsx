@@ -429,11 +429,13 @@ const detectLeidenCommunities = (nodes, edges) => {
 };
 
 // --- GRAPH VIEW COMPONENT ---
-const GraphView = ({ onNoteClick, onSave }) => {
+const GraphView = ({ onNoteClick, onSave, initialViewport }) => {
   const { notes, createNote, deleteNote, updateNote } = useNotes();
   const [graphMetadata, setGraphMetadata] = useState({});
   const [edges, setEdges] = useState([]);
-  const [viewport, setViewport] = useState({ x: window.innerWidth / 2, y: window.innerHeight / 2, zoom: 1 });
+  const [viewport, setViewport] = useState(
+    initialViewport || { x: window.innerWidth / 2, y: window.innerHeight / 2, zoom: 1 }
+  );
   
   const [interactionMode, setInteractionMode] = useState('IDLE');
   const [draggingNodeId, setDraggingNodeId] = useState(null);
@@ -442,6 +444,14 @@ const GraphView = ({ onNoteClick, onSave }) => {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [renamingNodeId, setRenamingNodeId] = useState(null);
   const hasLoadedDataRef = useRef(false);
+  const viewportRef = useRef(viewport);
+  const [isInitializing, setIsInitializing] = useState(true);
+  
+  useEffect(() => {
+    if (viewportRef) {
+      viewportRef.current = { viewport };
+    }
+  }, [viewport, viewportRef]);
 
   // Build nodes from actual notes + metadata
   const nodes = useMemo(() => {
@@ -457,7 +467,7 @@ const GraphView = ({ onNoteClick, onSave }) => {
           vx: meta.vx ?? 0,
           vy: meta.vy ?? 0,
           radius: meta.radius ?? 8,
-          lastVisited: new Date(note.updatedAt).getTime()
+          lastVisited: meta.lastVisited ?? new Date(note.updatedAt).getTime() // ✅ Use metadata first
         };
       });
   }, [notes, graphMetadata]);
@@ -480,6 +490,8 @@ const GraphView = ({ onNoteClick, onSave }) => {
   useEffect(() => {
     const loadGraphData = async () => {
       console.log('🔵 Loading graph data...');
+      setIsInitializing(true); // ✅ Show loading state
+      
       try {
         const res = await axios.get(`${API}/api/graph`, { withCredentials: true });
         
@@ -496,14 +508,21 @@ const GraphView = ({ onNoteClick, onSave }) => {
         
         setGraphMetadata(metadata);
         setEdges(res.data.edges || []);
-        hasLoadedDataRef.current = true; // ✅ Mark as loaded
+        hasLoadedDataRef.current = true;
         
         console.log('🔵 Loaded graph:', {
           nodes: res.data.nodes?.length || 0,
           edges: res.data.edges?.length || 0
         });
+        
+        // ✅ Small delay to ensure state is set before rendering
+        setTimeout(() => {
+          setIsInitializing(false);
+        }, 100);
+        
       } catch (error) {
         console.error('Failed to load graph:', error);
+        setIsInitializing(false); // ✅ Still stop loading on error
       }
     };
 
@@ -518,12 +537,12 @@ const GraphView = ({ onNoteClick, onSave }) => {
 
   useEffect(() => {
     return () => {
-      // ✅ Only save if we've loaded data
       if (hasLoadedDataRef.current) {
         console.log('🔴 Unmounting GraphView - saving graph');
         console.log('🔴 Data to save:', {
           metadata: Object.keys(graphMetadataRef.current).length,
-          edges: edgesRef.current.length
+          edges: edgesRef.current.length,
+          viewport: viewportRef.current // ✅ Log for debugging
         });
         onSaveRef.current(graphMetadataRef.current, edgesRef.current);
       } else {
@@ -749,11 +768,11 @@ const GraphView = ({ onNoteClick, onSave }) => {
     }
   };
   
-  const handleNodeDoubleClick = (e, nodeId, label) => {
+  const handleNodeDoubleClick = async (e, nodeId, label) => {
     e.stopPropagation();
     const now = Date.now();
     
-    // Update metadata to mark node as visited
+    // Update local state immediately for instant feedback
     setGraphMetadata(prev => ({
       ...prev,
       [nodeId]: {
@@ -761,6 +780,16 @@ const GraphView = ({ onNoteClick, onSave }) => {
         lastVisited: now
       }
     }));
+    
+    // ✅ Save to server so it persists
+    try {
+      await axios.put(`${API}/api/graph/nodes/${nodeId}`, 
+        { lastVisited: now }, 
+        { withCredentials: true }
+      );
+    } catch (error) {
+      console.error('Failed to update node visit time:', error);
+    }
     
     onNoteClick(nodeId, label);
   };
@@ -918,6 +947,14 @@ const GraphView = ({ onNoteClick, onSave }) => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [deleteSelection]);
+
+  if (isInitializing) {
+    return (
+      <div className="w-full h-screen bg-[#0b0b0b] flex items-center justify-center">
+        <div className="text-white/40 text-lg">Loading graph...</div>
+      </div>
+    );
+  }
 
   return (
     <div 
@@ -1937,15 +1974,18 @@ export default function MessyMap() {
   // --- OTHER STATE ---
   const [noteDataMap, setNoteDataMap] = useState({});
   const [loading, setLoading] = useState(false);
+  const [savedViewport, setSavedViewport] = useState(null);
+  const viewportRef = useRef(null);
 
   const handleNoteClick = async (id, name) => {
-    // Load canvas data for this note
+    // ✅ Save current viewport before leaving
+    setSavedViewport(viewportRef.current?.viewport); // ✅ Get from ref
+    
     try {
       const res = await axios.get(`${API}/api/canvas/note/${id}`, { 
         withCredentials: true 
       });
       
-      // Store the loaded canvas data with both nodes AND edges
       setNoteDataMap(prev => ({
         ...prev,
         [id]: {
@@ -1958,7 +1998,6 @@ export default function MessyMap() {
       setCurrentView('CANVAS');
     } catch (error) {
       console.error('Failed to load canvas:', error);
-      // Still open the canvas even if loading fails (it will be empty)
       setActiveNote({ id, name });
       setCurrentView('CANVAS');
     }
@@ -2027,6 +2066,8 @@ export default function MessyMap() {
         <GraphView 
           onNoteClick={handleNoteClick}
           onSave={handleGraphSave}
+          initialViewport={savedViewport}
+          viewportRef={viewportRef} // ✅ Pass ref
         />
       ) : (
         <CanvasView 
