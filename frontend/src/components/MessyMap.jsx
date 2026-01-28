@@ -1073,8 +1073,14 @@ const CanvasView = ({ onBack, conceptName, conceptId, initialData, onSave }) => 
   }, [nodes, edges, onSave, conceptId]);
 
   useEffect(() => {
-    return () => onSave(conceptId, { nodes: nodesRef.current, edges: edgesRef.current });
-  }, []);
+    return () => {
+      // Save when component unmounts
+      onSave(conceptId, { 
+        nodes: nodesRef.current, 
+        edges: edgesRef.current 
+      });
+    };
+  }, []); // Only run on unmount
 
   const getMouseScreenPos = useCallback((e) => {
     if (!containerRef.current) return { x: 0, y: 0 };
@@ -1878,9 +1884,30 @@ export default function MessyMap() {
     loadGraphData();
   }, []);
 
-  const handleNoteClick = (id, name) => {
-    setActiveNote({ id, name });
-    setCurrentView('CANVAS');
+  const handleNoteClick = async (id, name) => {
+    // Load canvas data for this note
+    try {
+      const res = await axios.get(`${API}/api/canvas/note/${id}`, { 
+        withCredentials: true 
+      });
+      
+      // Store the loaded canvas data with both nodes AND edges
+      setNoteDataMap(prev => ({
+        ...prev,
+        [id]: {
+          nodes: res.data.nodes || [],
+          edges: res.data.edges || []
+        }
+      }));
+      
+      setActiveNote({ id, name });
+      setCurrentView('CANVAS');
+    } catch (error) {
+      console.error('Failed to load canvas:', error);
+      // Still open the canvas even if loading fails (it will be empty)
+      setActiveNote({ id, name });
+      setCurrentView('CANVAS');
+    }
   };
 
   const handleBackToGraph = () => {
@@ -1909,16 +1936,19 @@ export default function MessyMap() {
   }, [notes]);
 
   const handleCanvasSave = async (id, data) => {
+    // Update local state immediately (optimistic update)
     setNoteDataMap(prev => ({
       ...prev,
       [id]: data
     }));
     
     try {
-      await axios.post(`${API}/api/canvas/${id}`, 
+      // Use note-specific endpoint
+      await axios.post(`${API}/api/canvas/note/${id}`, 
         data, 
         { withCredentials: true }
       );
+      console.log('Canvas saved successfully for note:', id);
     } catch (error) {
       console.error('Failed to save canvas:', error);
     }

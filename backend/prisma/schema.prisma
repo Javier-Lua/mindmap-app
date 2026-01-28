@@ -43,6 +43,7 @@ model Note {
   title     String   @default("Untitled Thought")
   content   Json?
   rawText   String?  @db.Text
+  canvas      Canvas?
 
   embedding Unsupported("vector(384)")?
 
@@ -133,8 +134,10 @@ model Graph {
 
 model Canvas {
   id        String   @id @default(uuid())
-  folderId  String
-  folder    Folder   @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  folderId  String?                    // Made optional
+  folder    Folder?  @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  noteId    String?                    // NEW: Support for note-based canvases
+  note      Note?    @relation(fields: [noteId], references: [id], onDelete: Cascade)
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   nodes     Json
@@ -143,6 +146,8 @@ model Canvas {
   updatedAt DateTime @updatedAt
 
   @@unique([folderId])
+  @@unique([noteId])                   // NEW: Unique constraint for noteId
   @@index([userId])
   @@index([folderId])
+  @@index([noteId])                    // NEW: Index for noteId
 }

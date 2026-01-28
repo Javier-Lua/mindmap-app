@@ -1471,6 +1471,146 @@ app.delete('/api/graph/nodes/:nodeId', auth, async (req, res) => {
 });
 
 // =============================================================================
+// CANVAS ENDPOINTS - Note-based (for Graph View)
+// =============================================================================
+
+/**
+ * GET /api/canvas/note/:noteId
+ * Get canvas data for a specific note
+ */
+app.get('/api/canvas/note/:noteId', auth, async (req, res) => {
+  try {
+    const { noteId } = req.params;
+
+    // Verify note belongs to user
+    const note = await prisma.note.findUnique({
+      where: { id: noteId },
+      select: { userId: true, title: true }
+    });
+
+    if (!note || note.userId !== req.userId) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+
+    // Try to get existing canvas
+    let canvas = await prisma.canvas.findUnique({
+      where: { noteId }
+    });
+
+    // If no canvas exists, create an empty one
+    if (!canvas) {
+      canvas = await prisma.canvas.create({
+        data: {
+          noteId,
+          userId: req.userId,
+          nodes: [],
+          edges: []
+        }
+      });
+    }
+
+    res.json({
+      noteId,
+      noteName: note.title,
+      nodes: canvas.nodes,
+      edges: canvas.edges,
+      updatedAt: canvas.updatedAt
+    });
+  } catch (error) {
+    console.error('Get canvas error:', error);
+    res.status(500).json({ error: 'Failed to load canvas' });
+  }
+});
+
+/**
+ * POST /api/canvas/note/:noteId
+ * Save canvas data for a specific note
+ */
+app.post('/api/canvas/note/:noteId', auth, async (req, res) => {
+  try {
+    const { noteId } = req.params;
+    const { nodes, edges } = req.body;
+
+    // Validate input
+    if (!Array.isArray(nodes) || !Array.isArray(edges)) {
+      return res.status(400).json({ 
+        error: 'Invalid input: nodes and edges must be arrays' 
+      });
+    }
+
+    // Verify note belongs to user
+    const note = await prisma.note.findUnique({
+      where: { id: noteId },
+      select: { userId: true }
+    });
+
+    if (!note || note.userId !== req.userId) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+
+    // Upsert the canvas
+    const canvas = await prisma.canvas.upsert({
+      where: { noteId },
+      update: {
+        nodes,
+        edges,
+        updatedAt: new Date()
+      },
+      create: {
+        noteId,
+        userId: req.userId,
+        nodes,
+        edges
+      }
+    });
+
+    res.json({
+      success: true,
+      noteId,
+      nodes: canvas.nodes,
+      edges: canvas.edges,
+      updatedAt: canvas.updatedAt
+    });
+  } catch (error) {
+    console.error('Save canvas error:', error);
+    res.status(500).json({ error: 'Failed to save canvas' });
+  }
+});
+
+/**
+ * DELETE /api/canvas/note/:noteId
+ * Delete canvas for a note
+ */
+app.delete('/api/canvas/note/:noteId', auth, async (req, res) => {
+  try {
+    const { noteId } = req.params;
+
+    const canvas = await prisma.canvas.findUnique({
+      where: { noteId },
+      include: { note: { select: { userId: true } } }
+    });
+
+    if (!canvas || canvas.note.userId !== req.userId) {
+      return res.status(404).json({ error: 'Canvas not found' });
+    }
+
+    // Reset to empty canvas
+    await prisma.canvas.update({
+      where: { noteId },
+      data: {
+        nodes: [],
+        edges: []
+      }
+    });
+
+    res.json({ success: true, noteId });
+  } catch (error) {
+    console.error('Clear canvas error:', error);
+    res.status(500).json({ error: 'Failed to clear canvas' });
+  }
+});
+
+// =============================================================================
 // CANVAS ENDPOINTS - Folder Content Canvas
 // =============================================================================
 
