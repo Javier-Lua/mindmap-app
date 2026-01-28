@@ -441,6 +441,7 @@ const GraphView = ({ onNoteClick, onSave }) => {
   const [connectionMousePos, setConnectionMousePos] = useState({ x: 0, y: 0 });
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [renamingNodeId, setRenamingNodeId] = useState(null);
+  const hasLoadedDataRef = useRef(false);
 
   // Build nodes from actual notes + metadata
   const nodes = useMemo(() => {
@@ -495,6 +496,7 @@ const GraphView = ({ onNoteClick, onSave }) => {
         
         setGraphMetadata(metadata);
         setEdges(res.data.edges || []);
+        hasLoadedDataRef.current = true; // ✅ Mark as loaded
         
         console.log('🔵 Loaded graph:', {
           nodes: res.data.nodes?.length || 0,
@@ -508,16 +510,27 @@ const GraphView = ({ onNoteClick, onSave }) => {
     loadGraphData();
   }, []);
 
+  const onSaveRef = useRef(onSave);
+
+  useEffect(() => {
+    onSaveRef.current = onSave;
+  }, [onSave]);
+
   useEffect(() => {
     return () => {
-      console.log('🔴 Unmounting GraphView - saving graph');
-      console.log('🔴 Data to save:', {
-        metadata: Object.keys(graphMetadataRef.current).length,
-        edges: edgesRef.current.length
-      });
-      onSave(graphMetadataRef.current, edgesRef.current);
+      // ✅ Only save if we've loaded data
+      if (hasLoadedDataRef.current) {
+        console.log('🔴 Unmounting GraphView - saving graph');
+        console.log('🔴 Data to save:', {
+          metadata: Object.keys(graphMetadataRef.current).length,
+          edges: edgesRef.current.length
+        });
+        onSaveRef.current(graphMetadataRef.current, edgesRef.current);
+      } else {
+        console.log('🟡 Unmounting GraphView - skipping save (no data loaded yet)');
+      }
     }
-  }, [onSave]);
+  }, []);
 
   const structureKey = useMemo(() => {
     return nodes.map(n => n.id).sort().join(',') + '|' + edges.map(e => e.id).sort().join(',');
@@ -1096,15 +1109,20 @@ const CanvasView = ({ onBack, conceptName, conceptId, initialData, onSave }) => 
   
   const contentEditableRef = useRef(null);
 
-  const graphMetadataRef = useRef(graphMetadata);  // Add this
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
+  const hasLoadedDataRef = useRef(false);
 
   useEffect(() => {
-    graphMetadataRef.current = graphMetadata;  // Add this
     nodesRef.current = nodes;
     edgesRef.current = edges;
-  }, [graphMetadata, nodes, edges]);  // Add graphMetadata to deps
+  }, [nodes, edges]);
+
+  // ✅ ADD THIS NEW EFFECT - Mark as loaded after mount
+  useEffect(() => {
+    // Mark as loaded immediately since we initialize from initialData
+    hasLoadedDataRef.current = true;
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -1113,15 +1131,26 @@ const CanvasView = ({ onBack, conceptName, conceptId, initialData, onSave }) => 
     return () => clearTimeout(timer);
   }, [nodes, edges, onSave, conceptId]);
 
+  const onSaveRef = useRef(onSave);
+
+  useEffect(() => {
+    onSaveRef.current = onSave;
+  }, [onSave]);
+
+  // ✅ MODIFY THIS EFFECT - Add the hasLoadedDataRef check
   useEffect(() => {
     return () => {
-      // Save when component unmounts
-      onSave(conceptId, { 
-        nodes: nodesRef.current, 
-        edges: edgesRef.current 
-      });
+      if (hasLoadedDataRef.current) {
+        console.log('🔴 Unmounting CanvasView - saving canvas');
+        onSaveRef.current(conceptId, { 
+          nodes: nodesRef.current, 
+          edges: edgesRef.current 
+        });
+      } else {
+        console.log('🟡 Unmounting CanvasView - skipping save (no data loaded yet)');
+      }
     };
-  }, []); // Only run on unmount
+  }, [conceptId]); // Keep conceptId in deps
 
   const getMouseScreenPos = useCallback((e) => {
     if (!containerRef.current) return { x: 0, y: 0 };
