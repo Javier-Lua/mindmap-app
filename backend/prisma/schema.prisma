@@ -1,80 +1,67 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
   previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
-  extensions = [vector]
+  extensions = [uuid_ossp(map: "uuid-ossp", schema: "extensions"), vector]
 }
 
 model User {
-  id       String   @id @default(uuid())
-  email    String   @unique
+  id       String    @id @default(uuid())
+  email    String    @unique
   name     String?
-
-  notes    Note[]
-  folders  Folder[]
-  clusters Cluster[]
-
-  graphs   Graph[]
   canvases Canvas[]
+  clusters Cluster[]
+  folders  Folder[]
+  graphs   Graph?
+  notes    Note[]
 }
 
 model Folder {
-  id       String  @id @default(uuid())
+  id       String   @id @default(uuid())
   name     String
   userId   String
   parentId String?
-
-  user     User    @relation(fields: [userId], references: [id])
-  parent   Folder? @relation("FolderTree", fields: [parentId], references: [id])
+  canvas   Canvas?
+  parent   Folder?  @relation("FolderTree", fields: [parentId], references: [id])
   children Folder[] @relation("FolderTree")
+  user     User     @relation(fields: [userId], references: [id])
   notes    Note[]
-  canvas Canvas?
 
   @@index([userId])
   @@index([parentId])
 }
 
 model Note {
-  id        String   @id @default(uuid())
-  title     String   @default("Untitled Thought")
-  content   Json?
-  rawText   String?  @db.Text
-  canvas      Canvas?
-
-  embedding Unsupported("vector(384)")?
-
-  x         Float    @default(0)
-  y         Float    @default(0)
-  color     String   @default("#ffffff")
-
-  folderId  String?
-  userId    String
-
-  folder    Folder? @relation(fields: [folderId], references: [id])
-  user      User    @relation(fields: [userId], references: [id])
-
-  outgoing  Link[]  @relation("Source")
-  incoming  Link[]  @relation("Target")
-
+  id          String                 @id @default(uuid())
+  title       String                 @default("Untitled Thought")
+  content     Json?
+  rawText     String?
+  embedding   Unsupported("vector")?
+  x           Float                  @default(0)
+  y           Float                  @default(0)
+  color       String                 @default("#ffffff")
+  folderId    String?
+  userId      String
+  type        String                 @default("text")
+  fileUrl     String?
+  ephemeral   Boolean                @default(true)
+  sticky      Boolean                @default(false)
+  priority    Int                    @default(0)
+  weight      Float                  @default(1.0)
+  archived    Boolean                @default(false)
+  updatedAt   DateTime               @updatedAt
+  createdAt   DateTime               @default(now())
   annotations Annotation[]
-  clusters    Cluster[] @relation("NoteClusters")
-
-  type       String   @default("text")
-  fileUrl    String?
-
-  // Messy-mind workflow fields
-  ephemeral  Boolean  @default(true)
-  sticky     Boolean  @default(false)
-  priority   Int      @default(0)
-  weight     Float    @default(1.0)
-  archived   Boolean  @default(false)
-
-  updatedAt  DateTime @updatedAt
-  createdAt  DateTime @default(now())
+  canvas      Canvas[]
+  outgoing    Link[]                 @relation("Source")
+  incoming    Link[]                 @relation("Target")
+  folder      Folder?                @relation(fields: [folderId], references: [id])
+  user        User                   @relation(fields: [userId], references: [id])
+  clusters    Cluster[]              @relation("NoteClusters")
 
   @@index([userId])
   @@index([archived])
@@ -84,15 +71,13 @@ model Note {
 }
 
 model Link {
-  id        String @id @default(uuid())
-  sourceId  String
-  targetId  String
-
-  source    Note   @relation("Source", fields: [sourceId], references: [id], onDelete: Cascade)
-  target    Note   @relation("Target", fields: [targetId], references: [id], onDelete: Cascade)
-
-  strength  Float  @default(1.0)
-  reason    String?
+  id       String  @id @default(uuid())
+  sourceId String
+  targetId String
+  strength Float   @default(1.0)
+  reason   String?
+  source   Note    @relation("Source", fields: [sourceId], references: [id], onDelete: Cascade)
+  target   Note    @relation("Target", fields: [targetId], references: [id], onDelete: Cascade)
 
   @@unique([sourceId, targetId])
   @@index([sourceId])
@@ -101,18 +86,16 @@ model Link {
 
 model Annotation {
   id      String @id @default(uuid())
-  noteId String
-  text   String
+  noteId  String
+  text    String
   comment String
-
-  note   Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  note    Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
 }
 
 model Cluster {
   id     String @id @default(uuid())
   name   String
   userId String
-
   user   User   @relation(fields: [userId], references: [id])
   notes  Note[] @relation("NoteClusters")
 
@@ -121,33 +104,30 @@ model Cluster {
 
 model Graph {
   id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  metadata  Json     // Store only x, y, vx, vy, radius per noteId
-  edges     Json     @default("[]") // ← ADD THIS LINE
+  userId    String   @unique
+  metadata  Json
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  edges     Json     @default("[]")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId])
   @@index([userId])
 }
 
 model Canvas {
   id        String   @id @default(uuid())
-  folderId  String?                    // Made optional
-  folder    Folder?  @relation(fields: [folderId], references: [id], onDelete: Cascade)
-  noteId    String?                    // NEW: Support for note-based canvases
-  note      Note?    @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  folderId  String?  @unique
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   nodes     Json
   edges     Json
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  noteId    String?
+  folder    Folder?  @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  note      Note?    @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([folderId])
-  @@unique([noteId])                   // NEW: Unique constraint for noteId
   @@index([userId])
   @@index([folderId])
-  @@index([noteId])                    // NEW: Index for noteId
+  @@index([noteId])
 }

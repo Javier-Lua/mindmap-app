@@ -1531,7 +1531,6 @@ app.post('/api/canvas/note/:noteId', auth, async (req, res) => {
     const { noteId } = req.params;
     const { nodes, edges } = req.body;
 
-    // Validate input
     if (!Array.isArray(nodes) || !Array.isArray(edges)) {
       return res.status(400).json({ 
         error: 'Invalid input: nodes and edges must be arrays' 
@@ -1548,21 +1547,31 @@ app.post('/api/canvas/note/:noteId', auth, async (req, res) => {
       return res.status(404).json({ error: 'Note not found' });
     }
 
-    // Upsert the canvas
-    const canvas = await prisma.canvas.upsert({
-      where: { noteId },
-      update: {
-        nodes,
-        edges,
-        updatedAt: new Date()
-      },
-      create: {
-        noteId,
-        userId: req.userId,
-        nodes,
-        edges
-      }
+    // Find existing canvas
+    let canvas = await prisma.canvas.findUnique({
+      where: { noteId }
     });
+
+    // Update or create
+    if (canvas) {
+      canvas = await prisma.canvas.update({
+        where: { noteId },
+        data: {
+          nodes,
+          edges,
+          updatedAt: new Date()
+        }
+      });
+    } else {
+      canvas = await prisma.canvas.create({
+        data: {
+          noteId,
+          userId: req.userId,
+          nodes,
+          edges
+        }
+      });
+    }
 
     res.json({
       success: true,
