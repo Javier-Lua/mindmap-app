@@ -5,6 +5,99 @@ import { useNotes } from '../contexts/NotesContext';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
+// --- Local Storage Manager ---
+const GRAPH_STORAGE_KEY = 'messy-notes-graph';
+const LAST_SYNC_KEY = 'messy-notes-graph-sync';
+const VIEWPORT_STORAGE_KEY = 'messy-notes-viewport';
+const SYNC_INTERVAL = 60000; // 30 seconds
+
+const GraphStorage = {
+  get: () => {
+    try {
+      const data = localStorage.getItem(GRAPH_STORAGE_KEY);
+      return data ? JSON.parse(data) : { metadata: {}, edges: [] };
+    } catch (e) {
+      console.error('Failed to read graph from localStorage:', e);
+      return { metadata: {}, edges: [] };
+    }
+  },
+  
+  set: (data) => {
+    try {
+      localStorage.setItem(GRAPH_STORAGE_KEY, JSON.stringify(data));
+      localStorage.setItem(LAST_SYNC_KEY, Date.now().toString());
+    } catch (e) {
+      console.error('Failed to save graph to localStorage:', e);
+    }
+  },
+  
+  updateMetadata: (nodeId, updates) => {
+    const graph = GraphStorage.get();
+    graph.metadata[nodeId] = {
+      ...(graph.metadata[nodeId] || {}),
+      ...updates
+    };
+    GraphStorage.set(graph);
+    return graph;
+  },
+  
+  updateAllMetadata: (metadata) => {
+    const graph = GraphStorage.get();
+    graph.metadata = metadata;
+    GraphStorage.set(graph);
+    return graph;
+  },
+  
+  setEdges: (edges) => {
+    const graph = GraphStorage.get();
+    graph.edges = edges;
+    GraphStorage.set(graph);
+    return graph;
+  },
+  
+  getLastSync: () => {
+    try {
+      const timestamp = localStorage.getItem(LAST_SYNC_KEY);
+      return timestamp ? parseInt(timestamp) : 0;
+    } catch (e) {
+      return 0;
+    }
+  },
+  
+  clear: () => {
+    try {
+      localStorage.removeItem(GRAPH_STORAGE_KEY);
+      localStorage.removeItem(LAST_SYNC_KEY);
+    } catch (e) {
+      console.error('Failed to clear graph storage:', e);
+    }
+  }
+};
+
+const ViewportStorage = {
+  get: () => {
+    try {
+      const data = localStorage.getItem(VIEWPORT_STORAGE_KEY);
+      return data ? JSON.parse(data) : { 
+        x: window.innerWidth / 2, 
+        y: window.innerHeight / 2, 
+        zoom: 1 
+      };
+    } catch (e) {
+      console.error('Failed to read viewport from localStorage:', e);
+      return { x: window.innerWidth / 2, y: window.innerHeight / 2, zoom: 1 };
+    }
+  },
+  
+  set: (viewport) => {
+    try {
+      localStorage.setItem(VIEWPORT_STORAGE_KEY, JSON.stringify(viewport));
+    } catch (e) {
+      console.error('Failed to save viewport to localStorage:', e);
+    }
+  }
+};
+
 // --- Utility Functions ---
 const hashString = (str) => {
   let hash = 0;
@@ -427,21 +520,13 @@ const detectLeidenCommunities = (nodes, edges) => {
 
 // --- GRAPH VIEW COMPONENT ---
 const GraphView = ({ 
-  onNoteClick, 
-  onSave, 
-  initialViewport, 
-  viewportRef,
-  initialMetadata,
-  initialEdges
+  onNoteClick
 }) => {
   const { notes, createNote, deleteNote, updateNote } = useNotes();
   
-  const [graphMetadata, setGraphMetadata] = useState(initialMetadata || {});
-  const [edges, setEdges] = useState(initialEdges || []);
-  
-  const [viewport, setViewport] = useState(
-    initialViewport || { x: window.innerWidth / 2, y: window.innerHeight / 2, zoom: 1 }
-  );
+  // Load from localStorage on mount
+  const [graphData, setGraphData] = useState(() => GraphStorage.get());
+  const [viewport, setViewport] = useState(() => ViewportStorage.get());
   
   const [interactionMode, setInteractionMode] = useState('IDLE');
   const [draggingNodeId, setDraggingNodeId] = useState(null);
@@ -450,45 +535,125 @@ const GraphView = ({
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [renamingNodeId, setRenamingNodeId] = useState(null);
   
-  useEffect(() => {
-    if (viewportRef) {
-      viewportRef.current = viewport;
-    }
-  }, [viewport, viewportRef]);
+  const isSavingRef = useRef(false);
+  const lastServerSyncRef = useRef(0);
   
+  // Save viewport to localStorage whenever it changes
   useEffect(() => {
-    if (initialMetadata) {
-      setGraphMetadata(initialMetadata);
-    }
-  }, [initialMetadata]);
+    ViewportStorage.set(viewport);
+  }, [viewport]);
   
+  // Initial server fetch (only once on mount)
   useEffect(() => {
-    if (initialEdges) {
-      setEdges(initialEdges);
-    }
-  }, [initialEdges]);
+    const loadFromServer = async () => {
+      try {
+        const res = await axios.get(`${API}/api/graph`, { withCredentials: true });
+        
+        const metadata = {};
+        (res.data.nodes || []).forEach(node => {
+          metadata[node.id] = {
+            x: node.x,
+            y: node.y,
+            vx: node.vx || 0,
+            vy: node.vy || 0,
+            radius: node.radius || 8,
+            lastVisited: node.lastVisited || new Date(node.updatedAt).getTime()
+          };
+        });
+        
+        // Merge with localStorage (localStorage takes precedence for positions)
+        // Merge with localStorage (localStorage takes precedence)
+        const localData = GraphStorage.get();
+        const mergedMetadata = {};
+        
+        // First, add all server nodes
+        Object.keys(serverMetadata).forEach(nodeId => {
+          mergedMetadata[nodeId] = serverMetadata[nodeId];
+        });
+        
+        // Then, override with local data where it exists
+        Object.keys(localData.metadata).forEach(nodeId => {
+          if (mergedMetadata[nodeId]) {
+            // Keep local positions and velocities, but preserve server's lastVisited if it's newer
+            mergedMetadata[nodeId] = {
+              ...mergedMetadata[nodeId],
+              x: localData.metadata[nodeId].x ?? mergedMetadata[nodeId].x,
+              y: localData.metadata[nodeId].y ?? mergedMetadata[nodeId].y,
+              vx: localData.metadata[nodeId].vx ?? mergedMetadata[nodeId].vx,
+              vy: localData.metadata[nodeId].vy ?? mergedMetadata[nodeId].vy,
+              // Keep the MOST RECENT lastVisited
+              lastVisited: Math.max(
+                localData.metadata[nodeId].lastVisited || 0,
+                mergedMetadata[nodeId].lastVisited || 0
+              )
+            };
+          } else {
+            mergedMetadata[nodeId] = localData.metadata[nodeId];
+          }
+        });
+        
+        const merged = {
+          metadata: mergedMetadata,
+          edges: res.data.edges || localData.edges || []
+        };
+        
+        GraphStorage.set(merged);
+        setGraphData(merged);
+        lastServerSyncRef.current = Date.now();
+      } catch (error) {
+        console.error('Failed to load graph from server:', error);
+        // If server fails, just use localStorage
+      }
+    };
+    
+    loadFromServer();
+  }, []);
   
+  // Background sync to server (every 30 seconds)
   useEffect(() => {
-    if (initialViewport) {
-      setViewport(initialViewport);
-    }
-  }, [initialViewport]);
+    const syncToServer = async () => {
+      if (isSavingRef.current) return;
+      
+      const timeSinceLastSync = Date.now() - lastServerSyncRef.current;
+      if (timeSinceLastSync < SYNC_INTERVAL) return;
+      
+      isSavingRef.current = true;
+      
+      try {
+        const localData = GraphStorage.get();
+        const nodes = notes
+          .filter(n => !n.archived)
+          .map(note => ({
+            id: note.id,
+            label: note.title,
+            ...(localData.metadata[note.id] || {})
+          }));
+          
+        await axios.post(`${API}/api/graph`, 
+          { nodes, edges: localData.edges }, 
+          { withCredentials: true }
+        );
+        
+        lastServerSyncRef.current = Date.now();
+        console.log('🔄 Synced graph to server');
+      } catch (error) {
+        console.error('Failed to sync graph to server:', error);
+      } finally {
+        isSavingRef.current = false;
+      }
+    };
+    
+    const interval = setInterval(syncToServer, SYNC_INTERVAL);
+    return () => clearInterval(interval);
+  }, [notes]);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      onSave(graphMetadata, edges);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [graphMetadata, edges, onSave]);
-
-  // ✅ FIX: Add small random velocities if nodes are static
   const nodes = useMemo(() => {
     return notes
       .filter(note => !note.archived)
       .map(note => {
-        const meta = graphMetadata[note.id] || {};
+        const meta = graphData.metadata[note.id] || {};
         
-        // ✅ If velocities are 0 or undefined, add small random initial velocity
+        // Ensure small random velocities if not set
         const vx = (meta.vx !== undefined && meta.vx !== 0) ? meta.vx : (Math.random() - 0.5) * 2;
         const vy = (meta.vy !== undefined && meta.vy !== 0) ? meta.vy : (Math.random() - 0.5) * 2;
         
@@ -503,7 +668,7 @@ const GraphView = ({
           lastVisited: meta.lastVisited ?? new Date(note.updatedAt).getTime()
         };
       });
-  }, [notes, graphMetadata]);
+  }, [notes, graphData.metadata]);
   
   const dragStartPos = useRef({ x: 0, y: 0 });
   const hasDragged = useRef(false);
@@ -511,11 +676,11 @@ const GraphView = ({
   const animationRef = useRef(0);
 
   const structureKey = useMemo(() => {
-    return nodes.map(n => n.id).sort().join(',') + '|' + edges.map(e => e.id).sort().join(',');
-  }, [nodes.length, edges]); 
+    return nodes.map(n => n.id).sort().join(',') + '|' + graphData.edges.map(e => e.id).sort().join(',');
+  }, [nodes.length, graphData.edges]); 
 
   const communities = useMemo(() => {
-    return detectLeidenCommunities(nodes, edges);
+    return detectLeidenCommunities(nodes, graphData.edges);
   }, [structureKey]); 
 
   const { nodeColors, glowStyles } = useMemo(() => {
@@ -524,7 +689,7 @@ const GraphView = ({
 
     const adj = {};
     nodes.forEach(n => adj[n.id] = []);
-    edges.forEach(e => {
+    graphData.edges.forEach(e => {
       if(nodes.some(n => n.id === e.source) && nodes.some(n => n.id === e.target)) {
         adj[e.source].push(e.target);
         adj[e.target].push(e.source);
@@ -565,21 +730,21 @@ const GraphView = ({
     });
 
     return { nodeColors: colors, glowStyles: glows };
-  }, [nodes, edges, communities]);
+  }, [nodes, graphData.edges, communities]);
 
-  // ✅ FIX: Ensure physics simulation always runs
+  // Physics simulation
   useEffect(() => {
     const simulate = () => {
-      setGraphMetadata(prevMeta => {
-        const nextMeta = { ...prevMeta };
+      setGraphData(prevData => {
+        const nextMetadata = { ...prevData.metadata };
 
         const currentNodes = nodes.map(n => ({
           ...n,
-          x: nextMeta[n.id]?.x ?? n.x,
-          y: nextMeta[n.id]?.y ?? n.y,
-          vx: nextMeta[n.id]?.vx ?? n.vx,
-          vy: nextMeta[n.id]?.vy ?? n.vy,
-          radius: nextMeta[n.id]?.radius ?? 8
+          x: nextMetadata[n.id]?.x ?? n.x,
+          y: nextMetadata[n.id]?.y ?? n.y,
+          vx: nextMetadata[n.id]?.vx ?? n.vx,
+          vy: nextMetadata[n.id]?.vy ?? n.vy,
+          radius: nextMetadata[n.id]?.radius ?? 8
         }));
 
         const nodeMap = {};
@@ -590,7 +755,7 @@ const GraphView = ({
         const damping = 0.9;
         const centerForce = 0.005;
 
-        // Repulsion between nodes
+        // Repulsion
         for (let i = 0; i < currentNodes.length; i++) {
           for (let j = i + 1; j < currentNodes.length; j++) {
             const dx = currentNodes[i].x - currentNodes[j].x;
@@ -613,8 +778,8 @@ const GraphView = ({
           }
         }
 
-        // Spring forces along edges
-        edges.forEach(edge => {
+        // Spring forces
+        prevData.edges.forEach(edge => {
           const s = nodeMap[edge.source];
           const t = nodeMap[edge.target];
           if (s && t) {
@@ -637,7 +802,7 @@ const GraphView = ({
           }
         });
 
-        // Apply damping, center force, and update positions
+        // Apply damping and update
         currentNodes.forEach(n => {
           if (n.id === draggingNodeId) return;
 
@@ -650,17 +815,21 @@ const GraphView = ({
           n.x += n.vx;
           n.y += n.vy;
 
-          nextMeta[n.id] = {
+          nextMetadata[n.id] = {
             x: n.x,
             y: n.y,
             vx: n.vx,
             vy: n.vy,
             radius: n.radius,
-            lastVisited: nextMeta[n.id]?.lastVisited
+            lastVisited: nextMetadata[n.id]?.lastVisited
           };
         });
 
-        return nextMeta;
+        // Save to localStorage
+        const updated = { ...prevData, metadata: nextMetadata };
+        GraphStorage.set(updated);
+        
+        return updated;
       });
 
       animationRef.current = requestAnimationFrame(simulate);
@@ -668,8 +837,7 @@ const GraphView = ({
 
     animationRef.current = requestAnimationFrame(simulate);
     return () => cancelAnimationFrame(animationRef.current);
-  }, [edges, draggingNodeId, nodes]);
-
+  }, [graphData.edges, draggingNodeId, nodes]);
 
   const getMouseCanvasPos = useCallback((e) => {
     if (!containerRef.current) return { x: 0, y: 0 };
@@ -726,12 +894,26 @@ const GraphView = ({
     }
   };
   
-  // ✅ FIX: Navigate immediately without updating glow
-  const handleNodeDoubleClick = async (e, nodeId, label) => {
+  const handleNodeDoubleClick = (e, nodeId, label) => {
     e.stopPropagation();
     
-    // Navigate immediately without updating lastVisited locally
-    // The parent will handle the server update after navigation
+    // Update lastVisited in localStorage immediately
+    const now = Date.now();
+    GraphStorage.updateMetadata(nodeId, { lastVisited: now });
+    
+    // Update local state to trigger re-render with glow
+    setGraphData(prev => ({
+      ...prev,
+      metadata: {
+        ...prev.metadata,
+        [nodeId]: {
+          ...prev.metadata[nodeId],
+          lastVisited: now
+        }
+      }
+    }));
+    
+    // Navigate
     onNoteClick(nodeId, label);
   };
   
@@ -762,16 +944,17 @@ const GraphView = ({
       const dx = screenDx / viewport.zoom;
       const dy = screenDy / viewport.zoom;
       
-      setGraphMetadata(prev => {
+      setGraphData(prev => {
         const updated = { ...prev };
-        if (updated[draggingNodeId]) {
-          updated[draggingNodeId] = {
-            ...updated[draggingNodeId],
-            x: updated[draggingNodeId].x + dx,
-            y: updated[draggingNodeId].y + dy,
+        if (updated.metadata[draggingNodeId]) {
+          updated.metadata[draggingNodeId] = {
+            ...updated.metadata[draggingNodeId],
+            x: updated.metadata[draggingNodeId].x + dx,
+            y: updated.metadata[draggingNodeId].y + dy,
             vx: 0,
             vy: 0
           };
+          GraphStorage.set(updated);
         }
         return updated;
       });
@@ -799,7 +982,7 @@ const GraphView = ({
       });
 
       if (targetNode) {
-        const exists = edges.some(edge => 
+        const exists = graphData.edges.some(edge => 
           (edge.source === connectionStartId && edge.target === targetNode.id) ||
           (edge.target === connectionStartId && edge.source === targetNode.id)
         );
@@ -810,7 +993,11 @@ const GraphView = ({
             source: connectionStartId,
             target: targetNode.id
           };
-          setEdges(prev => [...prev, newEdge]);
+          setGraphData(prev => {
+            const updated = { ...prev, edges: [...prev.edges, newEdge] };
+            GraphStorage.set(updated);
+            return updated;
+          });
         }
       }
     }
@@ -832,16 +1019,24 @@ const GraphView = ({
         content: { type: 'doc', content: [] }
       });
       
-      setGraphMetadata(prev => ({
-        ...prev,
-        [newNote.id]: {
-          x: canvasPos.x,
-          y: canvasPos.y,
-          vx: (Math.random() - 0.5) * 2,
-          vy: (Math.random() - 0.5) * 2,
-          radius: 8
-        }
-      }));
+      setGraphData(prev => {
+        const updated = {
+          ...prev,
+          metadata: {
+            ...prev.metadata,
+            [newNote.id]: {
+              x: canvasPos.x,
+              y: canvasPos.y,
+              vx: (Math.random() - 0.5) * 2,
+              vy: (Math.random() - 0.5) * 2,
+              radius: 8,
+              lastVisited: Date.now()
+            }
+          }
+        };
+        GraphStorage.set(updated);
+        return updated;
+      });
       
       setSelectedIds(new Set([newNote.id]));
     } catch (error) {
@@ -852,11 +1047,17 @@ const GraphView = ({
   const deleteSelection = useCallback(async () => {
     if (selectedIds.size === 0 || renamingNodeId) return;
     
-    setEdges(prev => prev.filter(e => 
+    const updatedEdges = graphData.edges.filter(e => 
       !selectedIds.has(e.id) && 
       !selectedIds.has(e.source) && 
       !selectedIds.has(e.target)
-    ));
+    );
+    
+    setGraphData(prev => {
+      const updated = { ...prev, edges: updatedEdges };
+      GraphStorage.set(updated);
+      return updated;
+    });
     
     for (const id of selectedIds) {
       if (nodes.some(n => n.id === id)) {
@@ -869,7 +1070,7 @@ const GraphView = ({
     }
     
     setSelectedIds(new Set());
-  }, [selectedIds, renamingNodeId, deleteNote, nodes]);
+  }, [selectedIds, renamingNodeId, deleteNote, nodes, graphData.edges]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -922,7 +1123,7 @@ const GraphView = ({
         }}
       >
         <svg className="absolute overflow-visible top-0 left-0 w-1 h-1 pointer-events-none">
-          {edges.map((e) => {
+          {graphData.edges.map((e) => {
             const s = nodes.find(n => n.id === e.source);
             const t = nodes.find(n => n.id === e.target);
             if (!s || !t) return null;
@@ -1894,87 +2095,11 @@ export default function MessyMap() {
 
   const [currentView, setCurrentView] = useState('GRAPH');
   const [activeNote, setActiveNote] = useState(null);
-
-  const [graphMetadata, setGraphMetadata] = useState({});
-  const [graphEdges, setGraphEdges] = useState([]);
-  const [graphLoaded, setGraphLoaded] = useState(false);
-
   const [noteDataMap, setNoteDataMap] = useState({});
-  const [loading, setLoading] = useState(false);
-  const [savedViewport, setSavedViewport] = useState(null);
-
-  const viewportRef = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2, zoom: 1 });
-
-  useEffect(() => {
-    const loadGraphData = async () => {
-      try {
-        const res = await axios.get(`${API}/api/graph`, { withCredentials: true });
-        
-        const metadata = {};
-        (res.data.nodes || []).forEach(node => {
-          metadata[node.id] = {
-            x: node.x,
-            y: node.y,
-            vx: node.vx || 0,
-            vy: node.vy || 0,
-            radius: node.radius || 8,
-            lastVisited: node.lastVisited || new Date(node.updatedAt).getTime()
-          };
-        });
-        
-        setGraphMetadata(metadata);
-        setGraphEdges(res.data.edges || []);
-        setGraphLoaded(true);
-      } catch (error) {
-        console.error('Failed to load graph:', error);
-        setGraphLoaded(true);
-      }
-    };
-
-    loadGraphData();
-  }, []);
-
-  useEffect(() => {
-    if (!graphLoaded) return;
-
-    const timer = setTimeout(async () => {
-      try {
-        const nodes = notes
-          .filter(n => !n.archived)
-          .map(note => ({
-            id: note.id,
-            label: note.title,
-            ...(graphMetadata[note.id] || {})
-          }));
-          
-        await axios.post(`${API}/api/graph`, 
-          { nodes, edges: graphEdges }, 
-          { withCredentials: true }
-        );
-      } catch (error) {
-        console.error('Failed to save graph:', error);
-      }
-    }, 1000);
-
-    return () => clearTimeout(timer);
-  }, [graphMetadata, graphEdges, notes, graphLoaded]);
 
   const handleNoteClick = async (id, name) => {
-    // ✅ FIX: Save viewport and navigate immediately
-    setSavedViewport({ ...viewportRef.current });
     
-    // Update lastVisited on server only (not locally to avoid glow delay)
-    const now = Date.now();
-    try {
-      await axios.put(`${API}/api/graph/nodes/${id}`, 
-        { lastVisited: now }, 
-        { withCredentials: true }
-      );
-    } catch (error) {
-      console.error('Failed to update node visit time:', error);
-    }
-    
-    // Load canvas data
+    // Load canvas data (no need to update graph - it's in localStorage)
     try {
       const res = await axios.get(`${API}/api/canvas/note/${id}`, { 
         withCredentials: true 
@@ -1997,16 +2122,6 @@ export default function MessyMap() {
     }
   };
 
-  const handleBackToGraph = () => {
-    setCurrentView('GRAPH');
-    setActiveNote(null);
-  };
-  
-  const handleGraphSave = useCallback(async (metadata, edges) => {
-    setGraphMetadata(metadata);
-    setGraphEdges(edges);
-  }, []);
-
   const handleCanvasSave = async (id, data) => {
     setNoteDataMap(prev => ({
       ...prev,
@@ -2023,24 +2138,11 @@ export default function MessyMap() {
     }
   };
 
-  if (!graphLoaded && currentView === 'GRAPH') {
-    return (
-      <div className="w-full h-screen bg-[#0b0b0b] flex items-center justify-center">
-        <div className="text-white/40">Loading...</div>
-      </div>
-    );
-  }
-
   return (
     <>
       {currentView === 'GRAPH' ? (
         <GraphView 
           onNoteClick={handleNoteClick}
-          onSave={handleGraphSave}
-          initialViewport={savedViewport}
-          viewportRef={viewportRef}
-          initialMetadata={graphMetadata}
-          initialEdges={graphEdges}
         />
       ) : (
         <CanvasView 
