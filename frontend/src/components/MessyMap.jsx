@@ -549,9 +549,9 @@ const GraphView = ({
       try {
         const res = await axios.get(`${API}/api/graph`, { withCredentials: true });
         
-        const metadata = {};
+        const serverMetadata = {};
         (res.data.nodes || []).forEach(node => {
-          metadata[node.id] = {
+          serverMetadata[node.id] = {
             x: node.x,
             y: node.y,
             vx: node.vx || 0,
@@ -561,7 +561,6 @@ const GraphView = ({
           };
         });
         
-        // Merge with localStorage (localStorage takes precedence for positions)
         // Merge with localStorage (localStorage takes precedence)
         const localData = GraphStorage.get();
         const mergedMetadata = {};
@@ -592,9 +591,26 @@ const GraphView = ({
           }
         });
         
+        // ✅ Merge edges from both sources and deduplicate
+        const serverEdges = res.data.edges || [];
+        const localEdges = localData.edges || [];
+        
+        // Create a map to deduplicate edges by ID
+        const edgeMap = new Map();
+        
+        // Add local edges first (they might be newer)
+        localEdges.forEach(edge => {
+          edgeMap.set(edge.id, edge);
+        });
+        
+        // Add server edges (will overwrite if same ID exists)
+        serverEdges.forEach(edge => {
+          edgeMap.set(edge.id, edge);
+        });
+        
         const merged = {
           metadata: mergedMetadata,
-          edges: res.data.edges || localData.edges || []
+          edges: Array.from(edgeMap.values())
         };
         
         GraphStorage.set(merged);
@@ -671,6 +687,8 @@ const GraphView = ({
   }, [notes, graphData.metadata]);
   
   const dragStartPos = useRef({ x: 0, y: 0 });
+  const viewportStartRef = useRef({ x: 0, y: 0, zoom: 1 });
+  const nodeStartRef = useRef(null);  // ✅ Make this a useRef
   const hasDragged = useRef(false);
   const containerRef = useRef(null);
   const animationRef = useRef(0);
@@ -850,6 +868,15 @@ const GraphView = ({
     };
   }, [viewport]);
 
+  const getMouseScreenPos = useCallback((e) => {
+    if (!containerRef.current) return { x: 0, y: 0 };
+    const rect = containerRef.current.getBoundingClientRect();
+    return {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
+    };
+  }, []);
+
   const handleWheel = (e) => {
     e.preventDefault();
     const zoomSensitivity = 0.001;
@@ -870,6 +897,15 @@ const GraphView = ({
     } else {
       setInteractionMode('DRAGGING');
       setDraggingNodeId(nodeId);
+      
+      const screenPos = getMouseScreenPos(e);
+      dragStartPos.current = screenPos;
+      
+      // ✅ Store the initial node position in the ref
+      const meta = graphData.metadata[nodeId];
+      if (meta) {
+        nodeStartRef.current = { x: meta.x, y: meta.y };
+      }
       
       if (e.metaKey || e.ctrlKey) {
         const newSet = new Set(selectedIds);
@@ -931,26 +967,46 @@ const GraphView = ({
       setRenamingNodeId(null);
     }
     setInteractionMode('PANNING');
-    dragStartPos.current = { x: e.clientX, y: e.clientY };
+    const screenPos = getMouseScreenPos(e);
+    dragStartPos.current = screenPos;
+    viewportStartRef.current = { ...viewport };  // ✅ Store initial viewport
   };
 
   const handleMouseMove = (e) => {
-    const screenDx = e.movementX;
-    const screenDy = e.movementY;
+    const screenPos = getMouseScreenPos(e);
+    const canvasPos = getMouseCanvasPos(e);
     
-    if (interactionMode === 'DRAGGING' && draggingNodeId) {
-      if (Math.abs(screenDx) > 0 || Math.abs(screenDy) > 0) hasDragged.current = true;
+    if (interactionMode === 'PANNING') {
+      const dx = screenPos.x - dragStartPos.current.x;
+      const dy = screenPos.y - dragStartPos.current.y;
       
-      const dx = screenDx / viewport.zoom;
-      const dy = screenDy / viewport.zoom;
+      setViewport({
+        x: viewportStartRef.current.x + dx,
+        y: viewportStartRef.current.y + dy,
+        zoom: viewportStartRef.current.zoom
+      });
+    } 
+    else if (interactionMode === 'DRAGGING' && draggingNodeId && nodeStartRef.current) {
+      if (Math.abs(screenPos.x - dragStartPos.current.x) > 2 || 
+          Math.abs(screenPos.y - dragStartPos.current.y) > 2) {
+        hasDragged.current = true;
+      }
+      
+      // Calculate total delta from original position
+      const totalDx = (screenPos.x - dragStartPos.current.x) / viewport.zoom;
+      const totalDy = (screenPos.y - dragStartPos.current.y) / viewport.zoom;
+      
+      // Apply to original node position
+      const newX = nodeStartRef.current.x + totalDx;
+      const newY = nodeStartRef.current.y + totalDy;
       
       setGraphData(prev => {
         const updated = { ...prev };
         if (updated.metadata[draggingNodeId]) {
           updated.metadata[draggingNodeId] = {
             ...updated.metadata[draggingNodeId],
-            x: updated.metadata[draggingNodeId].x + dx,
-            y: updated.metadata[draggingNodeId].y + dy,
+            x: newX,
+            y: newY,
             vx: 0,
             vy: 0
           };
@@ -958,15 +1014,9 @@ const GraphView = ({
         }
         return updated;
       });
-    } else if (interactionMode === 'CONNECTING') {
-      const canvasPos = getMouseCanvasPos(e);
-      setConnectionMousePos(canvasPos);
-    } else if (interactionMode === 'PANNING') {
-      setViewport(prev => ({
-        ...prev,
-        x: prev.x + screenDx,
-        y: prev.y + screenDy
-      }));
+    }
+    else if (interactionMode === 'CONNECTING') {
+      setConnectionMousePos(canvasPos);  // ✅ Fixed - use setConnectionMousePos instead of setConnectionStatus
     }
   };
 
@@ -1005,6 +1055,7 @@ const GraphView = ({
     setInteractionMode('IDLE');
     setDraggingNodeId(null);
     setConnectionStartId(null);
+    nodeStartRef.current = null;  // ✅ Clear with .current
   };
 
   const handleDoubleClick = async (e) => {
@@ -2097,8 +2148,13 @@ export default function MessyMap() {
   const [activeNote, setActiveNote] = useState(null);
   const [noteDataMap, setNoteDataMap] = useState({});
 
+  // ✅ ADD THIS FUNCTION:
+  const handleBackToGraph = () => {
+    setCurrentView('GRAPH');
+    setActiveNote(null);
+  };
+
   const handleNoteClick = async (id, name) => {
-    
     // Load canvas data (no need to update graph - it's in localStorage)
     try {
       const res = await axios.get(`${API}/api/canvas/note/${id}`, { 
