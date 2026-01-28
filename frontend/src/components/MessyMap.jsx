@@ -117,9 +117,6 @@ const ImportantIcon = () => (
 const BackIcon = () => (
   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
 );
-const HomeIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-);
 
 // --- Rich Text Components ---
 const RichTextToolbar = ({ onCommand }) => {
@@ -434,12 +431,11 @@ const GraphView = ({
   onSave, 
   initialViewport, 
   viewportRef,
-  initialMetadata,  // ✅ NEW: Receive persistent metadata
-  initialEdges      // ✅ NEW: Receive persistent edges
+  initialMetadata,
+  initialEdges
 }) => {
   const { notes, createNote, deleteNote, updateNote } = useNotes();
   
-  // ✅ Use initialMetadata and initialEdges from parent instead of loading
   const [graphMetadata, setGraphMetadata] = useState(initialMetadata || {});
   const [edges, setEdges] = useState(initialEdges || []);
   
@@ -454,14 +450,12 @@ const GraphView = ({
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [renamingNodeId, setRenamingNodeId] = useState(null);
   
-  // ✅ Update viewport ref whenever viewport changes
   useEffect(() => {
     if (viewportRef) {
-      viewportRef.current = viewport; // ✅ Simpler structure
+      viewportRef.current = viewport;
     }
   }, [viewport, viewportRef]);
   
-  // ✅ Update local state when parent state changes (e.g., after saving)
   useEffect(() => {
     if (initialMetadata) {
       setGraphMetadata(initialMetadata);
@@ -474,14 +468,12 @@ const GraphView = ({
     }
   }, [initialEdges]);
   
-  // ✅ Restore viewport when coming back from canvas
   useEffect(() => {
     if (initialViewport) {
       setViewport(initialViewport);
     }
   }, [initialViewport]);
 
-  // ✅ Notify parent of changes (debounced)
   useEffect(() => {
     const timer = setTimeout(() => {
       onSave(graphMetadata, edges);
@@ -489,19 +481,24 @@ const GraphView = ({
     return () => clearTimeout(timer);
   }, [graphMetadata, edges, onSave]);
 
-  // Build nodes from actual notes + metadata
+  // ✅ FIX: Add small random velocities if nodes are static
   const nodes = useMemo(() => {
     return notes
       .filter(note => !note.archived)
       .map(note => {
         const meta = graphMetadata[note.id] || {};
+        
+        // ✅ If velocities are 0 or undefined, add small random initial velocity
+        const vx = (meta.vx !== undefined && meta.vx !== 0) ? meta.vx : (Math.random() - 0.5) * 2;
+        const vy = (meta.vy !== undefined && meta.vy !== 0) ? meta.vy : (Math.random() - 0.5) * 2;
+        
         return {
           id: note.id,
           label: note.title,
           x: meta.x ?? Math.random() * 400 - 200,
           y: meta.y ?? Math.random() * 400 - 200,
-          vx: meta.vx ?? 0,
-          vy: meta.vy ?? 0,
+          vx,
+          vy,
           radius: meta.radius ?? 8,
           lastVisited: meta.lastVisited ?? new Date(note.updatedAt).getTime()
         };
@@ -521,7 +518,6 @@ const GraphView = ({
     return detectLeidenCommunities(nodes, edges);
   }, [structureKey]); 
 
-  // ✅ Glow calculation depends on nodes (which includes lastVisited)
   const { nodeColors, glowStyles } = useMemo(() => {
     const colors = {};
     const glows = {};
@@ -569,24 +565,23 @@ const GraphView = ({
     });
 
     return { nodeColors: colors, glowStyles: glows };
-  }, [nodes, edges, communities]); // ✅ Recalculates when nodes change
+  }, [nodes, edges, communities]);
 
+  // ✅ FIX: Ensure physics simulation always runs
   useEffect(() => {
     const simulate = () => {
       setGraphMetadata(prevMeta => {
         const nextMeta = { ...prevMeta };
 
-        // Build current nodes with positions from metadata
         const currentNodes = nodes.map(n => ({
           ...n,
           x: nextMeta[n.id]?.x ?? n.x,
           y: nextMeta[n.id]?.y ?? n.y,
-          vx: nextMeta[n.id]?.vx ?? 0,
-          vy: nextMeta[n.id]?.vy ?? 0,
+          vx: nextMeta[n.id]?.vx ?? n.vx,
+          vy: nextMeta[n.id]?.vy ?? n.vy,
           radius: nextMeta[n.id]?.radius ?? 8
         }));
 
-        // Create a lookup map for O(1) access by id
         const nodeMap = {};
         currentNodes.forEach(n => { nodeMap[n.id] = n; });
 
@@ -618,7 +613,7 @@ const GraphView = ({
           }
         }
 
-        // Spring forces along edges using the lookup map
+        // Spring forces along edges
         edges.forEach(edge => {
           const s = nodeMap[edge.source];
           const t = nodeMap[edge.target];
@@ -655,14 +650,13 @@ const GraphView = ({
           n.x += n.vx;
           n.y += n.vy;
 
-          // Update metadata
           nextMeta[n.id] = {
             x: n.x,
             y: n.y,
             vx: n.vx,
             vy: n.vy,
             radius: n.radius,
-            lastVisited: nextMeta[n.id]?.lastVisited // ✅ Add this line
+            lastVisited: nextMeta[n.id]?.lastVisited
           };
         });
 
@@ -732,20 +726,12 @@ const GraphView = ({
     }
   };
   
+  // ✅ FIX: Navigate immediately without updating glow
   const handleNodeDoubleClick = async (e, nodeId, label) => {
     e.stopPropagation();
-    const now = Date.now();
     
-    // ✅ Update local state immediately
-    setGraphMetadata(prev => ({
-      ...prev,
-      [nodeId]: {
-        ...prev[nodeId],
-        lastVisited: now
-      }
-    }));
-    
-    // Note: Parent will handle server save via handleNoteClick
+    // Navigate immediately without updating lastVisited locally
+    // The parent will handle the server update after navigation
     onNoteClick(nodeId, label);
   };
   
@@ -776,7 +762,6 @@ const GraphView = ({
       const dx = screenDx / viewport.zoom;
       const dy = screenDy / viewport.zoom;
       
-      // Update metadata instead of calling setNodes
       setGraphMetadata(prev => {
         const updated = { ...prev };
         if (updated[draggingNodeId]) {
@@ -841,21 +826,19 @@ const GraphView = ({
     const canvasPos = getMouseCanvasPos(e);
     
     try {
-      // Create actual note via context
       const newNote = await createNote({
         title: 'New Note',
         rawText: '',
         content: { type: 'doc', content: [] }
       });
       
-      // Store visualization metadata
       setGraphMetadata(prev => ({
         ...prev,
         [newNote.id]: {
           x: canvasPos.x,
           y: canvasPos.y,
-          vx: 0,
-          vy: 0,
+          vx: (Math.random() - 0.5) * 2,
+          vy: (Math.random() - 0.5) * 2,
           radius: 8
         }
       }));
@@ -869,14 +852,12 @@ const GraphView = ({
   const deleteSelection = useCallback(async () => {
     if (selectedIds.size === 0 || renamingNodeId) return;
     
-    // Delete edges
     setEdges(prev => prev.filter(e => 
       !selectedIds.has(e.id) && 
       !selectedIds.has(e.source) && 
       !selectedIds.has(e.target)
     ));
     
-    // Delete actual notes via context
     for (const id of selectedIds) {
       if (nodes.some(n => n.id === id)) {
         try {
@@ -902,14 +883,6 @@ const GraphView = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [deleteSelection]);
-
-  if (isInitializing) {
-    return (
-      <div className="w-full h-screen bg-[#0b0b0b] flex items-center justify-center">
-        <div className="text-white/40 text-lg">Loading graph...</div>
-      </div>
-    );
-  }
 
   return (
     <div 
@@ -1110,9 +1083,7 @@ const CanvasView = ({ onBack, conceptName, conceptId, initialData, onSave }) => 
     edgesRef.current = edges;
   }, [nodes, edges]);
 
-  // ✅ ADD THIS NEW EFFECT - Mark as loaded after mount
   useEffect(() => {
-    // Mark as loaded immediately since we initialize from initialData
     hasLoadedDataRef.current = true;
   }, []);
 
@@ -1129,7 +1100,6 @@ const CanvasView = ({ onBack, conceptName, conceptId, initialData, onSave }) => 
     onSaveRef.current = onSave;
   }, [onSave]);
 
-  // ✅ MODIFY THIS EFFECT - Add the hasLoadedDataRef check
   useEffect(() => {
     return () => {
       if (hasLoadedDataRef.current) {
@@ -1142,7 +1112,7 @@ const CanvasView = ({ onBack, conceptName, conceptId, initialData, onSave }) => 
         console.log('🟡 Unmounting CanvasView - skipping save (no data loaded yet)');
       }
     };
-  }, [conceptId]); // Keep conceptId in deps
+  }, [conceptId]);
 
   const getMouseScreenPos = useCallback((e) => {
     if (!containerRef.current) return { x: 0, y: 0 };
@@ -1917,31 +1887,24 @@ const CanvasView = ({ onBack, conceptName, conceptId, initialData, onSave }) => 
 };
 
 // --- MAIN COMPONENT ---
-// Key changes at the bottom of the file - the main MessyMap component
-
 export default function MessyMap() {
   const navigate = useNavigate();
   const { folderId } = useParams();
   const { notes, createNote, deleteNote } = useNotes();
 
-  // --- VIEW STATE ---
   const [currentView, setCurrentView] = useState('GRAPH');
   const [activeNote, setActiveNote] = useState(null);
 
-  // ✅ FIX: Keep graph state in parent so it persists across view changes
   const [graphMetadata, setGraphMetadata] = useState({});
   const [graphEdges, setGraphEdges] = useState([]);
   const [graphLoaded, setGraphLoaded] = useState(false);
 
-  // --- OTHER STATE ---
   const [noteDataMap, setNoteDataMap] = useState({});
   const [loading, setLoading] = useState(false);
   const [savedViewport, setSavedViewport] = useState(null);
 
-  // ✅ FIX: Simpler viewport ref structure
   const viewportRef = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2, zoom: 1 });
 
-  // ✅ Load graph data once when component mounts
   useEffect(() => {
     const loadGraphData = async () => {
       try {
@@ -1964,14 +1927,13 @@ export default function MessyMap() {
         setGraphLoaded(true);
       } catch (error) {
         console.error('Failed to load graph:', error);
-        setGraphLoaded(true); // Still mark as loaded to show UI
+        setGraphLoaded(true);
       }
     };
 
     loadGraphData();
   }, []);
 
-  // ✅ Save graph data when metadata or edges change (debounced)
   useEffect(() => {
     if (!graphLoaded) return;
 
@@ -1992,26 +1954,17 @@ export default function MessyMap() {
       } catch (error) {
         console.error('Failed to save graph:', error);
       }
-    }, 1000); // Debounce saves
+    }, 1000);
 
     return () => clearTimeout(timer);
   }, [graphMetadata, graphEdges, notes, graphLoaded]);
 
   const handleNoteClick = async (id, name) => {
-    // ✅ FIX: Save current viewport (simpler structure)
+    // ✅ FIX: Save viewport and navigate immediately
     setSavedViewport({ ...viewportRef.current });
     
-    // ✅ Update lastVisited in parent state immediately
+    // Update lastVisited on server only (not locally to avoid glow delay)
     const now = Date.now();
-    setGraphMetadata(prev => ({
-      ...prev,
-      [id]: {
-        ...prev[id],
-        lastVisited: now
-      }
-    }));
-    
-    // ✅ Also save to server
     try {
       await axios.put(`${API}/api/graph/nodes/${id}`, 
         { lastVisited: now }, 
@@ -2021,6 +1974,7 @@ export default function MessyMap() {
       console.error('Failed to update node visit time:', error);
     }
     
+    // Load canvas data
     try {
       const res = await axios.get(`${API}/api/canvas/note/${id}`, { 
         withCredentials: true 
@@ -2046,15 +2000,11 @@ export default function MessyMap() {
   const handleBackToGraph = () => {
     setCurrentView('GRAPH');
     setActiveNote(null);
-    // savedViewport will be used when GraphView remounts
   };
   
   const handleGraphSave = useCallback(async (metadata, edges) => {
-    // ✅ Update parent state
     setGraphMetadata(metadata);
     setGraphEdges(edges);
-    
-    // Server save is handled by the useEffect above
   }, []);
 
   const handleCanvasSave = async (id, data) => {
@@ -2089,7 +2039,6 @@ export default function MessyMap() {
           onSave={handleGraphSave}
           initialViewport={savedViewport}
           viewportRef={viewportRef}
-          // ✅ Pass persistent state as props
           initialMetadata={graphMetadata}
           initialEdges={graphEdges}
         />
