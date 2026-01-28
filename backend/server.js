@@ -1305,7 +1305,7 @@ app.get('/api/graph', auth, async (req, res) => {
       select: { id: true, title: true, createdAt: true, updatedAt: true }
     });
 
-    // Get graph metadata
+    // Get graph metadata and edges
     let graph = await prisma.graph.findUnique({
       where: { userId: req.userId }
     });
@@ -1328,7 +1328,7 @@ app.get('/api/graph', auth, async (req, res) => {
       };
     });
 
-    // Build edges - keep existing logic
+    // Get edges from database, or empty array if no graph exists
     const edges = graph?.edges || [];
 
     res.json({ nodes, edges });
@@ -1365,7 +1365,7 @@ app.post('/api/graph', auth, async (req, res) => {
       };
     });
 
-    // Upsert the graph
+    // Upsert the graph with both metadata AND edges
     const graph = await prisma.graph.upsert({
       where: { userId: req.userId },
       update: {
@@ -1404,19 +1404,21 @@ app.put('/api/graph/nodes/:nodeId', auth, async (req, res) => {
       return res.status(404).json({ error: 'Graph not found' });
     }
 
-    // Update the specific node
-    const nodes = graph.nodes.map(node => 
-      node.id === nodeId ? { ...node, ...updates } : node
-    );
+    // Update the specific node metadata
+    const metadata = graph.metadata || {};
+    metadata[nodeId] = {
+      ...(metadata[nodeId] || {}),
+      ...updates
+    };
 
     const updatedGraph = await prisma.graph.update({
       where: { userId: req.userId },
-      data: { nodes }
+      data: { metadata }
     });
 
     res.json({
       success: true,
-      node: nodes.find(n => n.id === nodeId)
+      node: { id: nodeId, ...metadata[nodeId] }
     });
   } catch (error) {
     console.error('Update node error:', error);
@@ -1955,4 +1957,15 @@ app.get('/api/canvas/list', auth, async (req, res) => {
     console.error('List canvases error:', error);
     res.status(500).json({ error: 'Failed to list canvases' });
   }
+});
+
+app.get('/api/graph/debug', auth, async (req, res) => {
+  const graph = await prisma.graph.findUnique({
+    where: { userId: req.userId }
+  });
+  res.json({
+    metadata: graph?.metadata || {},
+    edges: graph?.edges || [],
+    edgeCount: (graph?.edges || []).length
+  });
 });

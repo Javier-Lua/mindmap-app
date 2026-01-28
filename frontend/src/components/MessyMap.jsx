@@ -466,19 +466,58 @@ const GraphView = ({ onNoteClick, onSave }) => {
   const containerRef = useRef(null);
   const animationRef = useRef(0);
 
+  const graphMetadataRef = useRef(graphMetadata);
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
 
   useEffect(() => {
+    graphMetadataRef.current = graphMetadata;
     nodesRef.current = nodes;
     edgesRef.current = edges;
-  }, [nodes, edges]);
+  }, [graphMetadata, nodes, edges]);
+
+  useEffect(() => {
+    const loadGraphData = async () => {
+      console.log('🔵 Loading graph data...');
+      try {
+        const res = await axios.get(`${API}/api/graph`, { withCredentials: true });
+        
+        const metadata = {};
+        (res.data.nodes || []).forEach(node => {
+          metadata[node.id] = {
+            x: node.x,
+            y: node.y,
+            vx: node.vx || 0,
+            vy: node.vy || 0,
+            radius: node.radius || 8
+          };
+        });
+        
+        setGraphMetadata(metadata);
+        setEdges(res.data.edges || []);
+        
+        console.log('🔵 Loaded graph:', {
+          nodes: res.data.nodes?.length || 0,
+          edges: res.data.edges?.length || 0
+        });
+      } catch (error) {
+        console.error('Failed to load graph:', error);
+      }
+    };
+
+    loadGraphData();
+  }, []);
 
   useEffect(() => {
     return () => {
-      onSave(graphMetadata, edgesRef.current);
+      console.log('🔴 Unmounting GraphView - saving graph');
+      console.log('🔴 Data to save:', {
+        metadata: Object.keys(graphMetadataRef.current).length,
+        edges: edgesRef.current.length
+      });
+      onSave(graphMetadataRef.current, edgesRef.current);
     }
-  }, []);
+  }, [onSave]);
 
   const structureKey = useMemo(() => {
     return nodes.map(n => n.id).sort().join(',') + '|' + edges.map(e => e.id).sort().join(',');
@@ -1057,13 +1096,15 @@ const CanvasView = ({ onBack, conceptName, conceptId, initialData, onSave }) => 
   
   const contentEditableRef = useRef(null);
 
+  const graphMetadataRef = useRef(graphMetadata);  // Add this
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
 
   useEffect(() => {
+    graphMetadataRef.current = graphMetadata;  // Add this
     nodesRef.current = nodes;
     edgesRef.current = edges;
-  }, [nodes, edges]);
+  }, [graphMetadata, nodes, edges]);  // Add graphMetadata to deps
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -1866,23 +1907,7 @@ export default function MessyMap() {
 
   // --- OTHER STATE ---
   const [noteDataMap, setNoteDataMap] = useState({});
-  const [loading, setLoading] = useState(true);
-
-  // --- LOAD GRAPH DATA ON MOUNT ---
-  useEffect(() => {
-    const loadGraphData = async () => {
-      try {
-        const res = await axios.get(`${API}/api/graph`, { withCredentials: true });
-        // Graph data is now managed directly in GraphView component
-        setLoading(false);
-      } catch (error) {
-        console.error('Failed to load graph:', error);
-        setLoading(false);
-      }
-    };
-
-    loadGraphData();
-  }, []);
+  const [loading, setLoading] = useState(false);
 
   const handleNoteClick = async (id, name) => {
     // Load canvas data for this note
@@ -1916,8 +1941,13 @@ export default function MessyMap() {
   };
   
   const handleGraphSave = useCallback(async (metadata, edges) => {
+    console.log('🟢 Saving graph:', { 
+      metadataCount: Object.keys(metadata).length, 
+      edgesCount: edges ? edges.length : 0,
+      edges: edges
+    });
+    
     try {
-      // Build nodes array for API (includes note data + metadata)
       const nodes = notes
         .filter(n => !n.archived)
         .map(note => ({

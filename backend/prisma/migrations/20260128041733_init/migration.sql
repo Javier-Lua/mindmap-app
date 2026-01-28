@@ -1,4 +1,7 @@
 -- CreateExtension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
+
+-- CreateExtension
 CREATE EXTENSION IF NOT EXISTS "vector";
 
 -- CreateTable
@@ -26,7 +29,7 @@ CREATE TABLE "Note" (
     "title" TEXT NOT NULL DEFAULT 'Untitled Thought',
     "content" JSONB,
     "rawText" TEXT,
-    "embedding" vector(384),
+    "embedding" vector,
     "x" DOUBLE PRECISION NOT NULL DEFAULT 0,
     "y" DOUBLE PRECISION NOT NULL DEFAULT 0,
     "color" TEXT NOT NULL DEFAULT '#ffffff',
@@ -76,6 +79,32 @@ CREATE TABLE "Cluster" (
 );
 
 -- CreateTable
+CREATE TABLE "Graph" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "metadata" JSONB NOT NULL,
+    "edges" JSONB NOT NULL DEFAULT '[]',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Graph_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Canvas" (
+    "id" TEXT NOT NULL,
+    "folderId" TEXT,
+    "noteId" TEXT,
+    "userId" TEXT NOT NULL,
+    "nodes" JSONB NOT NULL,
+    "edges" JSONB NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Canvas_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "_NoteClusters" (
     "A" TEXT NOT NULL,
     "B" TEXT NOT NULL
@@ -118,16 +147,34 @@ CREATE UNIQUE INDEX "Link_sourceId_targetId_key" ON "Link"("sourceId", "targetId
 CREATE UNIQUE INDEX "Cluster_name_userId_key" ON "Cluster"("name", "userId");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "Graph_userId_key" ON "Graph"("userId");
+
+-- CreateIndex
+CREATE INDEX "Graph_userId_idx" ON "Graph"("userId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Canvas_folderId_key" ON "Canvas"("folderId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Canvas_noteId_key" ON "Canvas"("noteId");
+
+-- CreateIndex
+CREATE INDEX "Canvas_userId_idx" ON "Canvas"("userId");
+
+-- CreateIndex
+CREATE INDEX "Canvas_folderId_idx" ON "Canvas"("folderId");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "_NoteClusters_AB_unique" ON "_NoteClusters"("A", "B");
 
 -- CreateIndex
 CREATE INDEX "_NoteClusters_B_index" ON "_NoteClusters"("B");
 
 -- AddForeignKey
-ALTER TABLE "Folder" ADD CONSTRAINT "Folder_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Folder" ADD CONSTRAINT "Folder_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "Folder"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Folder" ADD CONSTRAINT "Folder_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "Folder"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Folder" ADD CONSTRAINT "Folder_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Note" ADD CONSTRAINT "Note_folderId_fkey" FOREIGN KEY ("folderId") REFERENCES "Folder"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -148,13 +195,19 @@ ALTER TABLE "Annotation" ADD CONSTRAINT "Annotation_noteId_fkey" FOREIGN KEY ("n
 ALTER TABLE "Cluster" ADD CONSTRAINT "Cluster_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "Graph" ADD CONSTRAINT "Graph_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Canvas" ADD CONSTRAINT "Canvas_folderId_fkey" FOREIGN KEY ("folderId") REFERENCES "Folder"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Canvas" ADD CONSTRAINT "Canvas_noteId_fkey" FOREIGN KEY ("noteId") REFERENCES "Note"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Canvas" ADD CONSTRAINT "Canvas_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "_NoteClusters" ADD CONSTRAINT "_NoteClusters_A_fkey" FOREIGN KEY ("A") REFERENCES "Cluster"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "_NoteClusters" ADD CONSTRAINT "_NoteClusters_B_fkey" FOREIGN KEY ("B") REFERENCES "Note"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- Vector similarity index for Note.embedding
-CREATE INDEX IF NOT EXISTS idx_note_embedding
-ON "Note"
-USING ivfflat (embedding vector_cosine_ops)
-WITH (lists = 100);

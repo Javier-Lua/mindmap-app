@@ -56,7 +56,7 @@ model Note {
   updatedAt   DateTime               @updatedAt
   createdAt   DateTime               @default(now())
   annotations Annotation[]
-  canvas      Canvas[]
+  canvases    Canvas[]
   outgoing    Link[]                 @relation("Source")
   incoming    Link[]                 @relation("Target")
   folder      Folder?                @relation(fields: [folderId], references: [id])
@@ -106,9 +106,9 @@ model Graph {
   id        String   @id @default(uuid())
   userId    String   @unique
   metadata  Json
+  edges     Json     @default("[]")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  edges     Json     @default("[]")
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
@@ -117,17 +117,16 @@ model Graph {
 model Canvas {
   id        String   @id @default(uuid())
   folderId  String?  @unique
+  noteId    String?  @unique
   userId    String
   nodes     Json
   edges     Json
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  noteId    String?
   folder    Folder?  @relation(fields: [folderId], references: [id], onDelete: Cascade)
   note      Note?    @relation(fields: [noteId], references: [id], onDelete: Cascade)
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([folderId])
-  @@index([noteId])
 }
