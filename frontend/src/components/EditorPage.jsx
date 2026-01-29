@@ -7,18 +7,16 @@ import { Color } from '@tiptap/extension-color';
 import { FontFamily } from '@tiptap/extension-font-family';
 import { TextStyle } from '@tiptap/extension-text-style';
 import { Typography } from '@tiptap/extension-typography';
-import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
   Sparkles, MessageSquare, Layout, 
   Moon, Sun, Bold, Italic, Underline,
   Highlighter, Link as LinkIcon, Trash2, X, Save, Loader,
   List, ListOrdered, Code, Quote, Undo, Redo, Type,
-  AlignLeft, AlignCenter, AlignRight, Cloud, HardDrive
+  AlignLeft, AlignCenter, AlignRight, Cloud, HardDrive, Check
 } from 'lucide-react';
 import { useNotes } from '../contexts/NotesContext';
-
-const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+import FileService from '../services/FileService';
 
 function useDebounce(callback, delay) {
   const timeoutRef = useRef(null);
@@ -38,14 +36,9 @@ export default function EditorPage() {
   const { getNote, updateNoteLocal, updateNote } = useNotes();
   
   const [note, setNote] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState(null);
-  const [lastLocalSave, setLastLocalSave] = useState(null);
   const [saveError, setSaveError] = useState(null);
-  const [annotations, setAnnotations] = useState([]);
-  const [linkerSuggestions, setLinkerSuggestions] = useState([]);
-  const [showLinker, setShowLinker] = useState(false);
   const [isA4, setIsA4] = useState(true);
   const [theme, setTheme] = useState(() => {
     return document.documentElement.getAttribute('data-theme') || 'dark';
@@ -53,14 +46,11 @@ export default function EditorPage() {
   const [fontSize, setFontSize] = useState(16);
   const [fontFamily, setFontFamily] = useState('Inter');
   const [selectedText, setSelectedText] = useState('');
-  const [connections, setConnections] = useState({ incoming: [], outgoing: [] });
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   
   const isSavingRef = useRef(false);
   const currentNoteIdRef = useRef(null);
   const editorUpdateRef = useRef(false);
-  const cloudSaveIntervalRef = useRef(null);
-  const lastChangeTimeRef = useRef(Date.now());
+  const pendingChangesRef = useRef(false);
 
   const toggleTheme = () => {
     const newTheme = theme === 'dark' ? 'light' : 'dark';
@@ -85,7 +75,7 @@ export default function EditorPage() {
       },
     },
     onUpdate: ({ editor }) => {
-      if (editorUpdateRef.current || !note?.id || loading) return;
+      if (editorUpdateRef.current || !note?.id) return;
       
       const json = editor.getJSON();
       const text = editor.getText();
@@ -104,17 +94,10 @@ export default function EditorPage() {
         rawText: text
       }));
       
-      saveToLocalStorage({ ...note, title, content: json, rawText: text });
-      setHasUnsavedChanges(true);
+      pendingChangesRef.current = true;
       
-      const timeSinceLastChange = Date.now() - lastChangeTimeRef.current;
-      if (timeSinceLastChange > 5000) {
-        const charDiff = Math.abs((text?.length || 0) - (note.rawText?.length || 0));
-        if (charDiff > 100) {
-          saveToCloud();
-        }
-      }
-      lastChangeTimeRef.current = Date.now();
+      // Auto-save after 2 seconds of no typing
+      debouncedSave();
     },
     onSelectionUpdate: ({ editor }) => {
       const { from, to } = editor.state.selection;
@@ -123,125 +106,8 @@ export default function EditorPage() {
     }
   }, []);
 
-  useEffect(() => {
-    if (!id || currentNoteIdRef.current === id) {
-      return;
-    }
-
-    currentNoteIdRef.current = id;
-    loadNote();
-  }, [id]);
-
-  useEffect(() => {
-    cloudSaveIntervalRef.current = setInterval(() => {
-      if (hasUnsavedChanges && !loading && note?.id) {
-        saveToCloud();
-      }
-    }, 60000);
-
-    return () => {
-      if (cloudSaveIntervalRef.current) {
-        clearInterval(cloudSaveIntervalRef.current);
-      }
-    };
-  }, [hasUnsavedChanges, loading, note?.id]);
-
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault();
-        if (note?.id) {
-          saveToCloud();
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [note?.id]);
-
-  const saveToLocalStorage = (noteData) => {
-    if (!noteData?.id) return;
-    
-    const dataToSave = {
-      ...noteData,
-      lastLocalSave: new Date().toISOString()
-    };
-    
-    try {
-      localStorage.setItem(`note_${noteData.id}`, JSON.stringify(dataToSave));
-      setLastLocalSave(new Date());
-    } catch (e) {
-      console.error('Failed to save to localStorage:', e);
-    }
-  };
-
-  const loadNote = async () => {
-    // Don't try to load temporary notes from server
-    if (id.startsWith('temp-')) {
-      console.warn('Attempted to load temporary note, redirecting...');
-      navigate('/', { replace: true });
-      return;
-    }
-
-    setLoading(true);
-    setSaveError(null);
-
-    try {
-      const res = await axios.get(`${API}/api/notes/${id}`, { 
-        withCredentials: true,
-        timeout: 10000
-      });
-
-      if (currentNoteIdRef.current !== id) {
-        return;
-      }
-
-      setNote(res.data);
-      setAnnotations(res.data.annotations || []);
-      setConnections({
-        incoming: res.data.incoming || [],
-        outgoing: res.data.outgoing || []
-      });
-      setLastSaved(new Date());
-      setHasUnsavedChanges(false);
-      
-      if (editor && !editor.isDestroyed) {
-        editorUpdateRef.current = true;
-        editor.commands.setContent(res.data.content || '');
-        setTimeout(() => {
-          editorUpdateRef.current = false;
-        }, 0);
-      }
-      
-      saveToLocalStorage(res.data);
-    } catch (error) {
-      if (currentNoteIdRef.current !== id) {
-        return;
-      }
-
-      console.error('Failed to load note:', error);
-      
-      if (error.response?.status === 404) {
-        setSaveError('Note not found');
-        // Use replace to avoid back button issues
-        setTimeout(() => {
-          navigate('/', { replace: true });
-        }, 1000);
-      } else if (error.response?.status === 401) {
-        setSaveError('Session expired - please refresh the page');
-      } else {
-        setSaveError('Failed to load note. Please try again.');
-      }
-    } finally {
-      if (currentNoteIdRef.current === id) {
-        setLoading(false);
-      }
-    }
-  };
-
-  const saveToCloud = async () => {
-    if (!note?.id || isSavingRef.current || loading) return;
+  const saveToCloud = useCallback(async () => {
+    if (!note?.id || isSavingRef.current) return;
 
     isSavingRef.current = true;
     setSaving(true);
@@ -255,111 +121,103 @@ export default function EditorPage() {
       await updateNote(note.id, {
         content: currentContent,
         plainText: currentText,
-        title,
-        messyMode: true
+        title
       });
 
       setLastSaved(new Date());
-      setHasUnsavedChanges(false);
+      pendingChangesRef.current = false;
       setSaveError(null);
     } catch (error) {
       console.error('Cloud save failed:', error);
-      if (error.response?.status === 401) {
-        setSaveError('Session expired - please refresh');
-      } else {
-        setSaveError('Failed to save to cloud');
-      }
+      setSaveError('Failed to save');
     } finally {
       setSaving(false);
       isSavingRef.current = false;
     }
-  };
+  }, [note?.id, editor, updateNote]);
 
-  const runLinker = async () => {
-    if (!selectedText.trim() || !note?.id) return;
-    
-    try {
-      const res = await axios.post(`${API}/api/linker`, { 
-        text: selectedText, 
-        noteId: note.id 
-      }, { withCredentials: true });
-      setLinkerSuggestions(res.data.suggestions);
-      setShowLinker(true);
-    } catch (error) {
-      console.error('Linker failed:', error);
+  const debouncedSave = useDebounce(saveToCloud, 2000);
+
+  // Load note when ID changes
+  useEffect(() => {
+    if (!id || currentNoteIdRef.current === id) {
+      return;
     }
-  };
 
-  const addAnnotation = async () => {
-    if (!selectedText.trim() || !note?.id) return;
-    
-    try {
-      const newAnn = { text: selectedText, comment: '' };
-      const res = await axios.post(`${API}/api/notes/${note.id}/annotations`, newAnn, { 
-        withCredentials: true 
-      });
-      setAnnotations([...annotations, res.data]);
-    } catch (error) {
-      console.error('Failed to add annotation:', error);
-    }
-  };
-
-  const updateAnnotation = useDebounce(async (ann, comment) => {
-    try {
-      await axios.put(`${API}/api/annotations/${ann.id}`, { comment }, { 
-        withCredentials: true 
-      });
-      setAnnotations(annotations.map(a => a.id === ann.id ? { ...a, comment } : a));
-    } catch (error) {
-      console.error('Failed to update annotation:', error);
-    }
-  }, 500);
-
-  const deleteAnnotation = async (annId) => {
-    try {
-      setAnnotations(annotations.filter(a => a.id !== annId));
-      await axios.delete(`${API}/api/annotations/${annId}`, { withCredentials: true });
-    } catch (error) {
-      console.error('Failed to delete annotation:', error);
-      if (note?.id) {
-        const res = await axios.get(`${API}/api/notes/${note.id}`, { withCredentials: true });
-        setAnnotations(res.data.annotations || []);
+    // Save previous note before switching
+    const savePreviousNote = async () => {
+      if (currentNoteIdRef.current && pendingChangesRef.current && editor) {
+        console.log('Saving previous note before switch:', currentNoteIdRef.current);
+        await saveToCloud();
       }
-    }
-  };
+    };
 
-  const createLink = async (targetId) => {
-    if (!note?.id) return;
-    
+    savePreviousNote().then(() => {
+      currentNoteIdRef.current = id;
+      loadNote();
+    });
+  }, [id, editor, saveToCloud]);
+
+  // Save on unmount
+  useEffect(() => {
+    return () => {
+      if (pendingChangesRef.current && editor && note?.id) {
+        console.log('Saving note on unmount:', note.id);
+        // Synchronous save on unmount
+        const currentContent = editor.getJSON();
+        const currentText = editor.getText();
+        const title = currentText?.split('\n')[0].slice(0, 50) || 'Untitled Thought';
+        
+        updateNote(note.id, {
+          content: currentContent,
+          plainText: currentText,
+          title
+        }).catch(console.error);
+      }
+    };
+  }, [editor, note?.id, updateNote]);
+
+  const loadNote = async () => {
+    if (id.startsWith('temp-')) {
+      console.warn('Attempted to load temporary note, redirecting...');
+      navigate('/', { replace: true });
+      return;
+    }
+
+    setSaveError(null);
+
     try {
-      await axios.post(`${API}/api/links`, { 
-        sourceId: note.id, 
-        targetId 
-      }, { withCredentials: true });
-      setShowLinker(false);
+      const res = await FileService.getNote(id);
+
+      if (currentNoteIdRef.current !== id) {
+        return;
+      }
+
+      setNote(res);
+      setLastSaved(new Date());
+      pendingChangesRef.current = false;
       
-      const res = await axios.get(`${API}/api/notes/${note.id}`, { withCredentials: true });
-      setConnections({
-        incoming: res.data.incoming || [],
-        outgoing: res.data.outgoing || []
-      });
+      if (editor && !editor.isDestroyed) {
+        editorUpdateRef.current = true;
+        editor.commands.setContent(res.content || '');
+        setTimeout(() => {
+          editorUpdateRef.current = false;
+        }, 0);
+      }
     } catch (error) {
-      console.error('Failed to create link:', error);
+      if (currentNoteIdRef.current !== id) {
+        return;
+      }
+
+      console.error('Failed to load note:', error);
+      setSaveError('Failed to load note');
+      setTimeout(() => {
+        navigate('/', { replace: true });
+      }, 1000);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center theme-bg-primary">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
-          <p className="text-theme-secondary">Loading note...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (saveError === 'Note not found') {
+  if (saveError === 'Failed to load note') {
     return (
       <div className="min-h-screen flex items-center justify-center theme-bg-primary">
         <div className="text-center">
@@ -367,6 +225,17 @@ export default function EditorPage() {
           <p className="text-theme-primary text-lg mb-2">Note not found</p>
           <p className="text-theme-secondary mb-4">This note may have been deleted</p>
           <p className="text-sm text-theme-tertiary">Redirecting...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!note) {
+    return (
+      <div className="min-h-screen flex items-center justify-center theme-bg-primary">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
+          <p className="text-theme-secondary">Loading note...</p>
         </div>
       </div>
     );
@@ -382,27 +251,17 @@ export default function EditorPage() {
               <span className="text-xs">Saving...</span>
             </div>
           )}
-          {!saving && lastLocalSave && (
-            <div className="flex items-center gap-2 text-green-400" title="Saved locally">
-              <HardDrive size={14} />
-              <span className="text-xs">Local</span>
+          {!saving && lastSaved && !pendingChangesRef.current && (
+            <div className="flex items-center gap-2 text-green-400" title="All changes saved">
+              <Check size={14} />
+              <span className="text-xs">Saved</span>
             </div>
           )}
-          {!saving && lastSaved && !hasUnsavedChanges && (
-            <div className="flex items-center gap-2 text-green-400" title="Synced to cloud">
+          {!saving && pendingChangesRef.current && (
+            <div className="flex items-center gap-2 text-yellow-400">
               <Cloud size={14} />
-              <span className="text-xs">{new Date(lastSaved).toLocaleTimeString()}</span>
+              <span className="text-xs">Saving...</span>
             </div>
-          )}
-          {hasUnsavedChanges && !saving && (
-            <button
-              onClick={saveToCloud}
-              className="flex items-center gap-1 px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700"
-              title="Save to cloud (Ctrl+S)"
-            >
-              <Save size={12} />
-              Save
-            </button>
           )}
           {saveError && (
             <div className="flex items-center gap-2 text-red-400">
@@ -527,28 +386,6 @@ export default function EditorPage() {
           <Quote size={16} />
         </button>
 
-        <div className="h-6 w-px border-theme-primary" />
-
-        <button
-          onClick={runLinker}
-          disabled={!selectedText.trim()}
-          className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm text-white"
-          title="Find related notes"
-        >
-          <Sparkles size={14} />
-          Link
-        </button>
-
-        <button
-          onClick={addAnnotation}
-          disabled={!selectedText.trim()}
-          className="flex items-center gap-1 px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm text-white"
-          title="Add annotation"
-        >
-          <MessageSquare size={14} />
-          Annotate
-        </button>
-
         <div className="flex-1" />
 
         <button
@@ -568,83 +405,6 @@ export default function EditorPage() {
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        <div className="w-80 border-r p-5 overflow-y-auto sidebar-themed">
-          <div className="mb-6">
-            <h3 className="font-semibold text-theme-secondary text-xs uppercase tracking-wider mb-3 flex items-center gap-2">
-              <LinkIcon size={14} /> Connections
-            </h3>
-            
-            {connections.outgoing.length > 0 && (
-              <div className="mb-3">
-                <p className="text-xs text-theme-tertiary mb-2">Links to:</p>
-                {connections.outgoing.map(link => (
-                  <div
-                    key={link.id}
-                    onClick={() => navigate(`/note/${link.target.id}`)}
-                    className="mb-2 p-2.5 bg-theme-tertiary border border-theme-primary rounded-md cursor-pointer hover:border-blue-500 theme-bg-hover transition-colors text-sm"
-                  >
-                    → {link.target.title}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {connections.incoming.length > 0 && (
-              <div>
-                <p className="text-xs text-theme-tertiary mb-2">Linked from:</p>
-                {connections.incoming.map(link => (
-                  <div
-                    key={link.id}
-                    onClick={() => navigate(`/note/${link.source.id}`)}
-                    className="mb-2 p-2.5 bg-theme-tertiary border border-theme-primary rounded-md cursor-pointer hover:border-purple-500 theme-bg-hover transition-colors text-sm"
-                  >
-                    ← {link.source.title}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {connections.incoming.length === 0 && connections.outgoing.length === 0 && (
-              <p className="text-sm text-theme-tertiary italic">No connections yet</p>
-            )}
-          </div>
-
-          <div>
-            <h3 className="font-semibold text-theme-secondary text-xs uppercase tracking-wider mb-3 flex items-center gap-2">
-              <MessageSquare size={14} /> Annotations
-            </h3>
-            
-            {annotations.map((ann) => (
-              <div key={ann.id} className="mb-3 p-3 bg-yellow-900 bg-opacity-20 border border-yellow-700 border-opacity-30 rounded-md group">
-                <div className="flex items-start justify-between mb-2">
-                  <div className="text-xs text-yellow-200 font-medium italic line-clamp-2 flex-1">
-                    "{ann.text}"
-                  </div>
-                  <button
-                    onClick={() => deleteAnnotation(ann.id)}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity ml-2 flex-shrink-0"
-                  >
-                    <Trash2 size={12} className="text-red-400" />
-                  </button>
-                </div>
-                <textarea
-                  className="w-full text-sm bg-transparent focus:outline-none resize-none theme-text-primary"
-                  placeholder="Add your comment..."
-                  defaultValue={ann.comment || ''}
-                  onChange={(e) => updateAnnotation(ann, e.target.value)}
-                  rows="2"
-                />
-              </div>
-            ))}
-
-            {annotations.length === 0 && (
-              <p className="text-sm text-theme-tertiary italic">
-                Select text and click Annotate
-              </p>
-            )}
-          </div>
-        </div>
-
         <div className="flex-1 overflow-y-auto flex justify-center pt-8 pb-20 relative">
           <div
             className={`relative ${isA4 ? 'w-[21cm]' : 'w-full max-w-4xl'} bg-theme-card theme-text-primary theme-shadow-sm p-16 rounded-lg`}
@@ -657,47 +417,6 @@ export default function EditorPage() {
           </div>
         </div>
       </div>
-
-      {showLinker && (
-        <div className="absolute top-20 right-8 w-80 modal-themed rounded-lg shadow-xl p-4 z-50">
-          <div className="flex justify-between items-center mb-3">
-            <h4 className="text-base font-semibold theme-text-primary flex items-center gap-2">
-              <Sparkles size={16} className="text-blue-500" />
-              Related Notes
-            </h4>
-            <button
-              onClick={() => setShowLinker(false)}
-              className="text-theme-tertiary hover:text-theme-primary"
-            >
-              <X size={18} />
-            </button>
-          </div>
-
-          {linkerSuggestions.length > 0 ? (
-            <div className="space-y-2">
-              {linkerSuggestions.map(s => (
-                <div
-                  key={s.id}
-                  onClick={() => createLink(s.id)}
-                  className="p-3 bg-blue-900 bg-opacity-20 hover:bg-opacity-30 rounded-md cursor-pointer transition-colors border border-blue-700 border-opacity-30"
-                >
-                  <div className="font-medium theme-text-primary text-sm mb-1">
-                    {s.title}
-                  </div>
-                  <div className="text-xs text-blue-400">
-                    {s.reason}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-6">
-              <p className="text-theme-secondary text-sm">No similar notes found</p>
-              <p className="text-xs text-theme-tertiary mt-1">Try selecting different text</p>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

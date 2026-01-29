@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { 
   FileText, Home, Network, Search, Plus, Folder, 
-  ChevronRight, ChevronDown, LayoutGrid, Zap, RefreshCw, Loader, Trash2, Edit3, X, Check, FolderPlus
+  ChevronRight, ChevronDown, LayoutGrid, Zap, RefreshCw, Loader, Trash2, Edit3, X, Check, FolderPlus,
+  Star, Clock
 } from 'lucide-react';
 
 import EditorPage from './components/EditorPage';

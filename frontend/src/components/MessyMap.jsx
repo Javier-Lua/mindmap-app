@@ -1,19 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import axios from 'axios';
 import { useNotes } from '../contexts/NotesContext';
-
-const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+import FileService from '../services/FileService';
 
 // --- Local Storage Manager ---
 const GRAPH_STORAGE_KEY = 'messy-notes-graph';
 const LAST_SYNC_KEY = 'messy-notes-graph-sync';
 const VIEWPORT_STORAGE_KEY = 'messy-notes-viewport';
-const SYNC_INTERVAL = 60000; // 30 seconds
+const SYNC_INTERVAL = 60000;
 
 const GraphStorage = {
-  // Remove all localStorage references - we'll use Tauri directly
-  
   async get() {
     try {
       return await FileService.getGraph();
@@ -506,7 +502,6 @@ const GraphView = ({
 }) => {
   const { notes, createNote, deleteNote, updateNote } = useNotes();
   
-  // Load from localStorage on mount
   const [graphData, setGraphData] = useState(() => GraphStorage.get());
   const [viewport, setViewport] = useState(() => ViewportStorage.get());
   
@@ -520,12 +515,10 @@ const GraphView = ({
   const isSavingRef = useRef(false);
   const lastServerSyncRef = useRef(0);
   
-  // Save viewport to localStorage whenever it changes
   useEffect(() => {
     ViewportStorage.set(viewport);
   }, [viewport]);
   
-  // Initial server fetch (only once on mount)
   useEffect(() => {
     const loadFromFile = async () => {
       try {
@@ -539,7 +532,6 @@ const GraphView = ({
     loadFromFile();
   }, []);
   
-  // Save to file when data changes
   useEffect(() => {
     const saveToFile = async () => {
       await GraphStorage.set(graphData);
@@ -553,9 +545,8 @@ const GraphView = ({
     return notes
       .filter(note => !note.archived)
       .map(note => {
-        const meta = graphData.metadata[note.id] || {};
+        const meta = graphData.metadata?.[note.id] || {};
         
-        // Ensure small random velocities if not set
         const vx = (meta.vx !== undefined && meta.vx !== 0) ? meta.vx : (Math.random() - 0.5) * 2;
         const vy = (meta.vy !== undefined && meta.vy !== 0) ? meta.vy : (Math.random() - 0.5) * 2;
         
@@ -574,17 +565,17 @@ const GraphView = ({
   
   const dragStartPos = useRef({ x: 0, y: 0 });
   const viewportStartRef = useRef({ x: 0, y: 0, zoom: 1 });
-  const nodeStartRef = useRef(null);  // ✅ Make this a useRef
+  const nodeStartRef = useRef(null);
   const hasDragged = useRef(false);
   const containerRef = useRef(null);
   const animationRef = useRef(0);
 
   const structureKey = useMemo(() => {
-    return nodes.map(n => n.id).sort().join(',') + '|' + graphData.edges.map(e => e.id).sort().join(',');
+    return nodes.map(n => n.id).sort().join(',') + '|' + (graphData.edges || []).map(e => e.id).sort().join(',');
   }, [nodes.length, graphData.edges]); 
 
   const communities = useMemo(() => {
-    return detectLeidenCommunities(nodes, graphData.edges);
+    return detectLeidenCommunities(nodes, graphData.edges || []);
   }, [structureKey]); 
 
   const { nodeColors, glowStyles } = useMemo(() => {
@@ -593,7 +584,7 @@ const GraphView = ({
 
     const adj = {};
     nodes.forEach(n => adj[n.id] = []);
-    graphData.edges.forEach(e => {
+    (graphData.edges || []).forEach(e => {
       if(nodes.some(n => n.id === e.source) && nodes.some(n => n.id === e.target)) {
         adj[e.source].push(e.target);
         adj[e.target].push(e.source);
@@ -636,11 +627,10 @@ const GraphView = ({
     return { nodeColors: colors, glowStyles: glows };
   }, [nodes, graphData.edges, communities]);
 
-  // Physics simulation
   useEffect(() => {
     const simulate = () => {
       setGraphData(prevData => {
-        const nextMetadata = { ...prevData.metadata };
+        const nextMetadata = { ...(prevData.metadata || {}) };
 
         const currentNodes = nodes.map(n => ({
           ...n,
@@ -659,7 +649,6 @@ const GraphView = ({
         const damping = 0.9;
         const centerForce = 0.005;
 
-        // Repulsion
         for (let i = 0; i < currentNodes.length; i++) {
           for (let j = i + 1; j < currentNodes.length; j++) {
             const dx = currentNodes[i].x - currentNodes[j].x;
@@ -682,8 +671,7 @@ const GraphView = ({
           }
         }
 
-        // Spring forces
-        prevData.edges.forEach(edge => {
+        (prevData.edges || []).forEach(edge => {
           const s = nodeMap[edge.source];
           const t = nodeMap[edge.target];
           if (s && t) {
@@ -706,7 +694,6 @@ const GraphView = ({
           }
         });
 
-        // Apply damping and update
         currentNodes.forEach(n => {
           if (n.id === draggingNodeId) return;
 
@@ -729,7 +716,6 @@ const GraphView = ({
           };
         });
 
-        // Save to localStorage
         const updated = { ...prevData, metadata: nextMetadata };
         GraphStorage.set(updated);
 
@@ -738,7 +724,6 @@ const GraphView = ({
         );
         
         if (maxVelocity < 0.01) {
-          // Nodes have settled, stop simulation
           cancelAnimationFrame(animationRef.current);
           return prevData;
         }
@@ -797,8 +782,7 @@ const GraphView = ({
       const screenPos = getMouseScreenPos(e);
       dragStartPos.current = screenPos;
       
-      // ✅ Store the initial node position in the ref
-      const meta = graphData.metadata[nodeId];
+      const meta = graphData.metadata?.[nodeId];
       if (meta) {
         nodeStartRef.current = { x: meta.x, y: meta.y };
       }
@@ -829,23 +813,20 @@ const GraphView = ({
   const handleNodeDoubleClick = (e, nodeId, label) => {
     e.stopPropagation();
     
-    // Update lastVisited in localStorage immediately
     const now = Date.now();
     GraphStorage.updateMetadata(nodeId, { lastVisited: now });
     
-    // Update local state to trigger re-render with glow
     setGraphData(prev => ({
       ...prev,
       metadata: {
-        ...prev.metadata,
+        ...(prev.metadata || {}),
         [nodeId]: {
-          ...prev.metadata[nodeId],
+          ...(prev.metadata?.[nodeId] || {}),
           lastVisited: now
         }
       }
     }));
     
-    // Navigate
     onNoteClick(nodeId, label);
   };
   
@@ -865,7 +846,7 @@ const GraphView = ({
     setInteractionMode('PANNING');
     const screenPos = getMouseScreenPos(e);
     dragStartPos.current = screenPos;
-    viewportStartRef.current = { ...viewport };  // ✅ Store initial viewport
+    viewportStartRef.current = { ...viewport };
   };
 
   const handleMouseMove = (e) => {
@@ -888,17 +869,15 @@ const GraphView = ({
         hasDragged.current = true;
       }
       
-      // Calculate total delta from original position
       const totalDx = (screenPos.x - dragStartPos.current.x) / viewport.zoom;
       const totalDy = (screenPos.y - dragStartPos.current.y) / viewport.zoom;
       
-      // Apply to original node position
       const newX = nodeStartRef.current.x + totalDx;
       const newY = nodeStartRef.current.y + totalDy;
       
       setGraphData(prev => {
         const updated = { ...prev };
-        if (updated.metadata[draggingNodeId]) {
+        if (updated.metadata?.[draggingNodeId]) {
           updated.metadata[draggingNodeId] = {
             ...updated.metadata[draggingNodeId],
             x: newX,
@@ -912,7 +891,7 @@ const GraphView = ({
       });
     }
     else if (interactionMode === 'CONNECTING') {
-      setConnectionMousePos(canvasPos);  // ✅ Fixed - use setConnectionMousePos instead of setConnectionStatus
+      setConnectionMousePos(canvasPos);
     }
   };
 
@@ -928,7 +907,7 @@ const GraphView = ({
       });
 
       if (targetNode) {
-        const exists = graphData.edges.some(edge => 
+        const exists = (graphData.edges || []).some(edge => 
           (edge.source === connectionStartId && edge.target === targetNode.id) ||
           (edge.target === connectionStartId && edge.source === targetNode.id)
         );
@@ -940,7 +919,7 @@ const GraphView = ({
             target: targetNode.id
           };
           setGraphData(prev => {
-            const updated = { ...prev, edges: [...prev.edges, newEdge] };
+            const updated = { ...prev, edges: [...(prev.edges || []), newEdge] };
             GraphStorage.set(updated);
             return updated;
           });
@@ -951,7 +930,7 @@ const GraphView = ({
     setInteractionMode('IDLE');
     setDraggingNodeId(null);
     setConnectionStartId(null);
-    nodeStartRef.current = null;  // ✅ Clear with .current
+    nodeStartRef.current = null;
   };
 
   const handleDoubleClick = async (e) => {
@@ -970,7 +949,7 @@ const GraphView = ({
         const updated = {
           ...prev,
           metadata: {
-            ...prev.metadata,
+            ...(prev.metadata || {}),
             [newNote.id]: {
               x: canvasPos.x,
               y: canvasPos.y,
@@ -994,7 +973,7 @@ const GraphView = ({
   const deleteSelection = useCallback(async () => {
     if (selectedIds.size === 0 || renamingNodeId) return;
     
-    const updatedEdges = graphData.edges.filter(e => 
+    const updatedEdges = (graphData.edges || []).filter(e => 
       !selectedIds.has(e.id) && 
       !selectedIds.has(e.source) && 
       !selectedIds.has(e.target)
@@ -1070,7 +1049,7 @@ const GraphView = ({
         }}
       >
         <svg className="absolute overflow-visible top-0 left-0 w-1 h-1 pointer-events-none">
-          {graphData.edges.map((e) => {
+          {(graphData.edges || []).map((e) => {
             const s = nodes.find(n => n.id === e.source);
             const t = nodes.find(n => n.id === e.target);
             if (!s || !t) return null;
@@ -2044,24 +2023,20 @@ export default function MessyMap() {
   const [activeNote, setActiveNote] = useState(null);
   const [noteDataMap, setNoteDataMap] = useState({});
 
-  // ✅ ADD THIS FUNCTION:
   const handleBackToGraph = () => {
     setCurrentView('GRAPH');
     setActiveNote(null);
   };
 
   const handleNoteClick = async (id, name) => {
-    // Load canvas data (no need to update graph - it's in localStorage)
     try {
-      const res = await axios.get(`${API}/api/canvas/note/${id}`, { 
-        withCredentials: true 
-      });
+      const res = await FileService.getCanvas(id);
       
       setNoteDataMap(prev => ({
         ...prev,
         [id]: {
-          nodes: res.data.nodes || [],
-          edges: res.data.edges || []
+          nodes: res.nodes || [],
+          edges: res.edges || []
         }
       }));
       
@@ -2081,10 +2056,7 @@ export default function MessyMap() {
     }));
     
     try {
-      await axios.post(`${API}/api/canvas/note/${id}`, 
-        data, 
-        { withCredentials: true }
-      );
+      await FileService.saveCanvas(id, data.nodes, data.edges);
     } catch (error) {
       console.error('Failed to save canvas:', error);
     }
