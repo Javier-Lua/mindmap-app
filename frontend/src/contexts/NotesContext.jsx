@@ -1,7 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
-import axios from 'axios';
-
-const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+import FileService from '../services/FileService';
 
 const NotesContext = createContext(null);
 
@@ -15,10 +13,10 @@ export const useNotes = () => {
 
 export const NotesProvider = ({ children }) => {
   const [notes, setNotes] = useState([]);
-  const [folders, setFolders] = useState([]);
+  const [folders, setFolders] = useState([]); // Kept for compatibility, not used in local version
   const [isLoading, setIsLoading] = useState(false);
   const [lastSync, setLastSync] = useState(null);
-  const activeRequestsRef = useRef(new Set());
+  const [initialized, setInitialized] = useState(false);
   const notesMapRef = useRef(new Map());
   const createNoteInProgressRef = useRef(false);
 
@@ -28,48 +26,37 @@ export const NotesProvider = ({ children }) => {
     notesMapRef.current = map;
   }, [notes]);
 
-  const cancelRequest = useCallback((requestId) => {
-    activeRequestsRef.current.delete(requestId);
+  // Initialize app on mount
+  useEffect(() => {
+    const init = async () => {
+      try {
+        await FileService.init();
+        setInitialized(true);
+        await loadNotes(true);
+      } catch (error) {
+        console.error('Failed to initialize app:', error);
+      }
+    };
+    init();
   }, []);
 
   const loadNotes = useCallback(async (showLoader = false) => {
-    const requestId = `load-notes-${Date.now()}`;
-    activeRequestsRef.current.add(requestId);
-
     if (showLoader) setIsLoading(true);
 
     try {
-      const res = await axios.get(`${API}/api/notes`, {
-        withCredentials: true,
-        timeout: 10000
-      });
-
-      if (activeRequestsRef.current.has(requestId)) {
-        // Filter out any temporary notes that might still be in state
-        const serverNotes = res.data.filter(note => !note.id.startsWith('temp-'));
-        setNotes(serverNotes);
-        setLastSync(Date.now());
-      }
+      const serverNotes = await FileService.getNotes();
+      setNotes(serverNotes);
+      setLastSync(Date.now());
     } catch (error) {
       console.error('Failed to load notes:', error);
     } finally {
-      if (activeRequestsRef.current.has(requestId)) {
-        setIsLoading(false);
-      }
-      cancelRequest(requestId);
+      setIsLoading(false);
     }
-  }, [cancelRequest]);
+  }, []);
 
   const loadFolders = useCallback(async () => {
-    try {
-      const res = await axios.get(`${API}/api/home`, {
-        withCredentials: true,
-        timeout: 10000
-      });
-      setFolders(res.data.folders || []);
-    } catch (error) {
-      console.error('Failed to load folders:', error);
-    }
+    // Folders are not used in local version, but kept for compatibility
+    setFolders([]);
   }, []);
 
   const getNote = useCallback((noteId) => {
@@ -98,31 +85,19 @@ export const NotesProvider = ({ children }) => {
   }, []);
 
   const updateNote = useCallback(async (noteId, updates) => {
-    // Don't update temporary notes
-    if (noteId.startsWith('temp-')) {
-      console.warn('Attempted to update temporary note:', noteId);
-      return;
-    }
-
     // Optimistically update local state first
     updateNoteLocal(noteId, updates);
 
     try {
-      // Get the updated note from server
-      const res = await axios.put(`${API}/api/notes/${noteId}`, updates, {
-        withCredentials: true,
-        timeout: 10000
-      });
+      const updatedNote = await FileService.updateNote(noteId, updates);
 
-      // Update with server response to ensure consistency
       setNotes(prev => {
         const index = prev.findIndex(n => n.id === noteId);
         if (index === -1) return prev;
 
         const updated = [...prev];
-        updated[index] = res.data;
+        updated[index] = updatedNote;
 
-        // Move to front if title was updated
         if (updates.title) {
           const [note] = updated.splice(index, 1);
           updated.unshift(note);
@@ -131,38 +106,26 @@ export const NotesProvider = ({ children }) => {
         return updated;
       });
 
-      // Update last sync time to prevent unnecessary reloads
       setLastSync(Date.now());
     } catch (error) {
       console.error('Failed to update note:', error);
-      // On error, reload to get correct state
       await loadNotes(false);
     }
   }, [updateNoteLocal, loadNotes]);
 
   const createNote = useCallback(async (data = {}) => {
-    // Prevent concurrent note creation
     if (createNoteInProgressRef.current) {
-      console.warn('Note creation already in progress, ignoring duplicate request');
+      console.warn('Note creation already in progress');
       return;
     }
 
     createNoteInProgressRef.current = true;
 
     try {
-      // Create note directly without optimistic update to avoid duplicates
-      const res = await axios.post(`${API}/api/notes`, data, {
-        withCredentials: true,
-        timeout: 10000
-      });
-
-      // Add the new note to the beginning of the list
-      setNotes(prev => [res.data, ...prev]);
-      
-      // Update last sync time
+      const newNote = await FileService.createNote(data);
+      setNotes(prev => [newNote, ...prev]);
       setLastSync(Date.now());
-      
-      return res.data;
+      return newNote;
     } catch (error) {
       console.error('Failed to create note:', error);
       throw error;
@@ -172,32 +135,19 @@ export const NotesProvider = ({ children }) => {
   }, []);
 
   const deleteNote = useCallback(async (noteId) => {
-    // Don't try to delete temporary notes
-    if (noteId.startsWith('temp-')) {
-      setNotes(prev => prev.filter(n => n.id !== noteId));
-      return;
-    }
-
     // Optimistically remove from local state
     setNotes(prev => prev.filter(n => n.id !== noteId));
 
     try {
-      await axios.delete(`${API}/api/notes/${noteId}`, {
-        withCredentials: true,
-        timeout: 10000
-      });
-      
-      // Update last sync time
+      await FileService.deleteNote(noteId);
       setLastSync(Date.now());
     } catch (error) {
       console.error('Failed to delete note:', error);
-      // On error, reload to get correct state
       await loadNotes(false);
     }
   }, [loadNotes]);
 
   const deleteAllNotes = useCallback(async () => {
-    // Use functional update to get current notes
     let previousNotes = [];
     setNotes(prev => {
       previousNotes = prev;
@@ -205,76 +155,39 @@ export const NotesProvider = ({ children }) => {
     });
 
     try {
-      await axios.delete(`${API}/api/notes/all?confirm=DELETE_ALL`, {
-        withCredentials: true,
-        timeout: 30000
-      });
-      
-      // Update last sync time
+      await FileService.deleteAllNotes();
       setLastSync(Date.now());
     } catch (error) {
       console.error('Failed to delete all notes:', error);
-      // Restore previous notes on error
       setNotes(previousNotes);
       throw error;
     }
   }, []);
 
   const createFolder = useCallback(async (name) => {
-    try {
-      const res = await axios.post(`${API}/api/folders`, { name }, {
-        withCredentials: true,
-        timeout: 10000
-      });
-      setFolders(prev => [...prev, res.data]);
-      return res.data;
-    } catch (error) {
-      console.error('Failed to create folder:', error);
-      throw error;
-    }
+    // Folders not implemented in local version
+    console.warn('Folders not implemented in local version');
+    return null;
   }, []);
 
   const updateFolder = useCallback(async (folderId, updates) => {
-    // Optimistically update
-    setFolders(prev => prev.map(f => f.id === folderId ? { ...f, ...updates } : f));
-
-    try {
-      await axios.put(`${API}/api/folders/${folderId}`, updates, {
-        withCredentials: true,
-        timeout: 10000
-      });
-    } catch (error) {
-      console.error('Failed to update folder:', error);
-      await loadFolders();
-    }
-  }, [loadFolders]);
+    console.warn('Folders not implemented in local version');
+  }, []);
 
   const deleteFolder = useCallback(async (folderId) => {
-    // Optimistically remove
-    setFolders(prev => prev.filter(f => f.id !== folderId));
-
-    try {
-      await axios.delete(`${API}/api/folders/${folderId}`, {
-        withCredentials: true,
-        timeout: 10000
-      });
-      // Reload notes as they may have moved to root
-      await loadNotes(false);
-    } catch (error) {
-      console.error('Failed to delete folder:', error);
-      await loadFolders();
-    }
-  }, [loadNotes, loadFolders]);
+    console.warn('Folders not implemented in local version');
+  }, []);
 
   const refresh = useCallback(async () => {
-    await Promise.all([loadNotes(false), loadFolders()]);
-  }, [loadNotes, loadFolders]);
+    await loadNotes(false);
+  }, [loadNotes]);
 
   const value = {
     notes,
     folders,
     isLoading,
     lastSync,
+    initialized,
     loadNotes,
     loadFolders,
     getNote,

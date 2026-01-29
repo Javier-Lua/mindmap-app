@@ -1,0 +1,32 @@
+[package]
+name = "messy-notes"
+version = "1.0.0"
+description = "A spatial note-taking app for messy thinkers"
+authors = ["you"]
+license = ""
+repository = ""
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
+
+[dependencies]
+tauri = { version = "1.5", features = ["shell-open", "fs-all", "path-all", "dialog-all"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.6", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1.0"
+base64 = "0.21"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "z"
+strip = true

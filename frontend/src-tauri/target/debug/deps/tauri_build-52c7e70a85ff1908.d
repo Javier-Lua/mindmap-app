@@ -1,0 +1,10 @@
+/Users/javier/Desktop/Personal-Projects/mindmap-app/frontend/src-tauri/target/debug/deps/tauri_build-52c7e70a85ff1908.d: /Users/javier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-build-1.5.6/src/lib.rs /Users/javier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-build-1.5.6/src/allowlist.rs /Users/javier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-build-1.5.6/src/static_vcruntime.rs /Users/javier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-build-1.5.6/src/window-app-manifest.xml
+
+/Users/javier/Desktop/Personal-Projects/mindmap-app/frontend/src-tauri/target/debug/deps/libtauri_build-52c7e70a85ff1908.rlib: /Users/javier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-build-1.5.6/src/lib.rs /Users/javier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-build-1.5.6/src/allowlist.rs /Users/javier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-build-1.5.6/src/static_vcruntime.rs /Users/javier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-build-1.5.6/src/window-app-manifest.xml
+
+/Users/javier/Desktop/Personal-Projects/mindmap-app/frontend/src-tauri/target/debug/deps/libtauri_build-52c7e70a85ff1908.rmeta: /Users/javier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-build-1.5.6/src/lib.rs /Users/javier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-build-1.5.6/src/allowlist.rs /Users/javier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-build-1.5.6/src/static_vcruntime.rs /Users/javier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-build-1.5.6/src/window-app-manifest.xml
+
+/Users/javier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-build-1.5.6/src/lib.rs:
+/Users/javier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-build-1.5.6/src/allowlist.rs:
+/Users/javier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-build-1.5.6/src/static_vcruntime.rs:
+/Users/javier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-build-1.5.6/src/window-app-manifest.xml:

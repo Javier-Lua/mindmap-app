@@ -12,66 +12,48 @@ const VIEWPORT_STORAGE_KEY = 'messy-notes-viewport';
 const SYNC_INTERVAL = 60000; // 30 seconds
 
 const GraphStorage = {
-  get: () => {
+  // Remove all localStorage references - we'll use Tauri directly
+  
+  async get() {
     try {
-      const data = localStorage.getItem(GRAPH_STORAGE_KEY);
-      return data ? JSON.parse(data) : { metadata: {}, edges: [] };
+      return await FileService.getGraph();
     } catch (e) {
-      console.error('Failed to read graph from localStorage:', e);
       return { metadata: {}, edges: [] };
     }
   },
   
-  set: (data) => {
+  async set(data) {
     try {
-      localStorage.setItem(GRAPH_STORAGE_KEY, JSON.stringify(data));
-      localStorage.setItem(LAST_SYNC_KEY, Date.now().toString());
+      await FileService.saveGraph(data.metadata || {}, data.edges || []);
     } catch (e) {
-      console.error('Failed to save graph to localStorage:', e);
+      console.error('Failed to save graph:', e);
     }
   },
   
-  updateMetadata: (nodeId, updates) => {
-    const graph = GraphStorage.get();
+  async updateMetadata(nodeId, updates) {
+    const graph = await this.get();
+    if (!graph.metadata) graph.metadata = {};
     graph.metadata[nodeId] = {
       ...(graph.metadata[nodeId] || {}),
       ...updates
     };
-    GraphStorage.set(graph);
+    await this.set(graph);
     return graph;
   },
   
-  updateAllMetadata: (metadata) => {
-    const graph = GraphStorage.get();
+  async updateAllMetadata(metadata) {
+    const graph = await this.get();
     graph.metadata = metadata;
-    GraphStorage.set(graph);
+    await this.set(graph);
     return graph;
   },
   
-  setEdges: (edges) => {
-    const graph = GraphStorage.get();
+  async setEdges(edges) {
+    const graph = await this.get();
     graph.edges = edges;
-    GraphStorage.set(graph);
+    await this.set(graph);
     return graph;
   },
-  
-  getLastSync: () => {
-    try {
-      const timestamp = localStorage.getItem(LAST_SYNC_KEY);
-      return timestamp ? parseInt(timestamp) : 0;
-    } catch (e) {
-      return 0;
-    }
-  },
-  
-  clear: () => {
-    try {
-      localStorage.removeItem(GRAPH_STORAGE_KEY);
-      localStorage.removeItem(LAST_SYNC_KEY);
-    } catch (e) {
-      console.error('Failed to clear graph storage:', e);
-    }
-  }
 };
 
 const ViewportStorage = {
@@ -545,123 +527,27 @@ const GraphView = ({
   
   // Initial server fetch (only once on mount)
   useEffect(() => {
-    const loadFromServer = async () => {
+    const loadFromFile = async () => {
       try {
-        const res = await axios.get(`${API}/api/graph`, { withCredentials: true });
-        
-        const serverMetadata = {};
-        (res.data.nodes || []).forEach(node => {
-          serverMetadata[node.id] = {
-            x: node.x,
-            y: node.y,
-            vx: node.vx || 0,
-            vy: node.vy || 0,
-            radius: node.radius || 8,
-            lastVisited: node.lastVisited || new Date(node.updatedAt).getTime()
-          };
-        });
-        
-        // Merge with localStorage (localStorage takes precedence)
-        const localData = GraphStorage.get();
-        const mergedMetadata = {};
-        
-        // First, add all server nodes
-        Object.keys(serverMetadata).forEach(nodeId => {
-          mergedMetadata[nodeId] = serverMetadata[nodeId];
-        });
-        
-        // Then, override with local data where it exists
-        Object.keys(localData.metadata).forEach(nodeId => {
-          if (mergedMetadata[nodeId]) {
-            // Keep local positions and velocities, but preserve server's lastVisited if it's newer
-            mergedMetadata[nodeId] = {
-              ...mergedMetadata[nodeId],
-              x: localData.metadata[nodeId].x ?? mergedMetadata[nodeId].x,
-              y: localData.metadata[nodeId].y ?? mergedMetadata[nodeId].y,
-              vx: localData.metadata[nodeId].vx ?? mergedMetadata[nodeId].vx,
-              vy: localData.metadata[nodeId].vy ?? mergedMetadata[nodeId].vy,
-              // Keep the MOST RECENT lastVisited
-              lastVisited: Math.max(
-                localData.metadata[nodeId].lastVisited || 0,
-                mergedMetadata[nodeId].lastVisited || 0
-              )
-            };
-          } else {
-            mergedMetadata[nodeId] = localData.metadata[nodeId];
-          }
-        });
-        
-        // ✅ Merge edges from both sources and deduplicate
-        const serverEdges = res.data.edges || [];
-        const localEdges = localData.edges || [];
-        
-        // Create a map to deduplicate edges by ID
-        const edgeMap = new Map();
-        
-        // Add local edges first (they might be newer)
-        localEdges.forEach(edge => {
-          edgeMap.set(edge.id, edge);
-        });
-        
-        // Add server edges (will overwrite if same ID exists)
-        serverEdges.forEach(edge => {
-          edgeMap.set(edge.id, edge);
-        });
-        
-        const merged = {
-          metadata: mergedMetadata,
-          edges: Array.from(edgeMap.values())
-        };
-        
-        GraphStorage.set(merged);
-        setGraphData(merged);
-        lastServerSyncRef.current = Date.now();
+        const data = await GraphStorage.get();
+        setGraphData(data);
       } catch (error) {
-        console.error('Failed to load graph from server:', error);
-        // If server fails, just use localStorage
+        console.error('Failed to load graph:', error);
       }
     };
     
-    loadFromServer();
+    loadFromFile();
   }, []);
   
-  // Background sync to server (every 30 seconds)
+  // Save to file when data changes
   useEffect(() => {
-    const syncToServer = async () => {
-      if (isSavingRef.current) return;
-      
-      const timeSinceLastSync = Date.now() - lastServerSyncRef.current;
-      if (timeSinceLastSync < SYNC_INTERVAL) return;
-      
-      isSavingRef.current = true;
-      
-      try {
-        const localData = GraphStorage.get();
-        const nodes = notes
-          .filter(n => !n.archived)
-          .map(note => ({
-            id: note.id,
-            label: note.title,
-            ...(localData.metadata[note.id] || {})
-          }));
-          
-        await axios.post(`${API}/api/graph`, 
-          { nodes, edges: localData.edges }, 
-          { withCredentials: true }
-        );
-        
-        lastServerSyncRef.current = Date.now();
-        console.log('🔄 Synced graph to server');
-      } catch (error) {
-        console.error('Failed to sync graph to server:', error);
-      } finally {
-        isSavingRef.current = false;
-      }
+    const saveToFile = async () => {
+      await GraphStorage.set(graphData);
     };
     
-    const interval = setInterval(syncToServer, SYNC_INTERVAL);
-    return () => clearInterval(interval);
-  }, [notes]);
+    const timer = setTimeout(saveToFile, 500);
+    return () => clearTimeout(timer);
+  }, [graphData]);
 
   const nodes = useMemo(() => {
     return notes
@@ -846,6 +732,16 @@ const GraphView = ({
         // Save to localStorage
         const updated = { ...prevData, metadata: nextMetadata };
         GraphStorage.set(updated);
+
+        const maxVelocity = Math.max(
+          ...currentNodes.map(n => Math.sqrt(n.vx * n.vx + n.vy * n.vy))
+        );
+        
+        if (maxVelocity < 0.01) {
+          // Nodes have settled, stop simulation
+          cancelAnimationFrame(animationRef.current);
+          return prevData;
+        }
         
         return updated;
       });
