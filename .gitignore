@@ -3,4 +3,4 @@ node_modules/
 package-lock.json
 target/
 Cargo.lock/
-icons/
+icons/frontend/src-tauri/Cargo.lock
