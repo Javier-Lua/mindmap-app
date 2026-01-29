@@ -9,14 +9,29 @@ import { TextStyle } from '@tiptap/extension-text-style';
 import { Typography } from '@tiptap/extension-typography';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
-  Sparkles, MessageSquare, Layout, 
-  Moon, Sun, Bold, Italic, Underline,
-  Highlighter, Link as LinkIcon, Trash2, X, Save, Loader,
-  List, ListOrdered, Code, Quote, Undo, Redo, Type,
-  AlignLeft, AlignCenter, AlignRight, Cloud, HardDrive, Check
+  Moon, Sun, Bold, Italic,
+  Highlighter, Loader,
+  List, ListOrdered, Code, Quote, Undo, Redo,
+  Layout, Check
 } from 'lucide-react';
 import { useNotes } from '../contexts/NotesContext';
 import FileService from '../services/FileService';
+
+/**
+ * ====== FILE STORAGE INFORMATION ======
+ * 
+ * Notes are stored locally on your computer at:
+ * ~/Documents/MessyNotes/notes/{note-id}.md
+ * 
+ * Each note is a Markdown file with:
+ * - YAML frontmatter (metadata like title, dates, colors)
+ * - Plain text content
+ * 
+ * Saves happen directly to your local filesystem (no cloud).
+ * Changes are auto-saved 1 second after you stop typing.
+ * 
+ * ======================================
+ */
 
 function useDebounce(callback, delay) {
   const timeoutRef = useRef(null);
@@ -33,24 +48,22 @@ function useDebounce(callback, delay) {
 export default function EditorPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { getNote, updateNoteLocal, updateNote } = useNotes();
+  const { updateNote } = useNotes();
   
   const [note, setNote] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [lastSaved, setLastSaved] = useState(null);
-  const [saveError, setSaveError] = useState(null);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isA4, setIsA4] = useState(true);
   const [theme, setTheme] = useState(() => {
     return document.documentElement.getAttribute('data-theme') || 'dark';
   });
   const [fontSize, setFontSize] = useState(16);
   const [fontFamily, setFontFamily] = useState('Inter');
-  const [selectedText, setSelectedText] = useState('');
   
-  const isSavingRef = useRef(false);
+  // Refs to prevent race conditions
   const currentNoteIdRef = useRef(null);
+  const isLoadingRef = useRef(false);
+  const isSavingRef = useRef(false);
   const editorUpdateRef = useRef(false);
-  const pendingChangesRef = useRef(false);
 
   const toggleTheme = () => {
     const newTheme = theme === 'dark' ? 'light' : 'dark';
@@ -75,18 +88,14 @@ export default function EditorPage() {
       },
     },
     onUpdate: ({ editor }) => {
+      // Ignore programmatic updates
       if (editorUpdateRef.current || !note?.id) return;
       
       const json = editor.getJSON();
       const text = editor.getText();
       const title = text.split('\n')[0].slice(0, 50) || 'Untitled Thought';
       
-      updateNoteLocal(note.id, {
-        title,
-        content: json,
-        rawText: text
-      });
-      
+      // Update local state immediately
       setNote(prev => ({
         ...prev,
         title,
@@ -94,49 +103,38 @@ export default function EditorPage() {
         rawText: text
       }));
       
-      pendingChangesRef.current = true;
+      setHasUnsavedChanges(true);
       
-      // Auto-save after 2 seconds of no typing
-      debouncedSave();
+      // Debounced save to disk
+      debouncedSave(note.id, title, text, json);
     },
-    onSelectionUpdate: ({ editor }) => {
-      const { from, to } = editor.state.selection;
-      const text = editor.state.doc.textBetween(from, to, ' ');
-      setSelectedText(text);
-    }
-  }, []);
+  }, [note?.id]);
 
-  const saveToCloud = useCallback(async () => {
-    if (!note?.id || isSavingRef.current) return;
+  // Save to local file system
+  const saveToFile = useCallback(async (noteId, title, text, content) => {
+    if (isSavingRef.current || currentNoteIdRef.current !== noteId) return;
 
     isSavingRef.current = true;
-    setSaving(true);
-    setSaveError(null);
 
     try {
-      const currentContent = editor?.getJSON();
-      const currentText = editor?.getText();
-      const title = currentText?.split('\n')[0].slice(0, 50) || 'Untitled Thought';
-
-      await updateNote(note.id, {
-        content: currentContent,
-        plainText: currentText,
+      await updateNote(noteId, {
+        content,
+        plainText: text,
         title
       });
 
-      setLastSaved(new Date());
-      pendingChangesRef.current = false;
-      setSaveError(null);
+      // Only clear unsaved flag if we're still on the same note
+      if (currentNoteIdRef.current === noteId) {
+        setHasUnsavedChanges(false);
+      }
     } catch (error) {
-      console.error('Cloud save failed:', error);
-      setSaveError('Failed to save');
+      console.error('Failed to save note to file:', error);
     } finally {
-      setSaving(false);
       isSavingRef.current = false;
     }
-  }, [note?.id, editor, updateNote]);
+  }, [updateNote]);
 
-  const debouncedSave = useDebounce(saveToCloud, 2000);
+  const debouncedSave = useDebounce(saveToFile, 1000);
 
   // Load note when ID changes
   useEffect(() => {
@@ -144,30 +142,33 @@ export default function EditorPage() {
       return;
     }
 
-    // Save previous note before switching
+    // Save previous note immediately before switching
     const savePreviousNote = async () => {
-      if (currentNoteIdRef.current && pendingChangesRef.current && editor) {
-        console.log('Saving previous note before switch:', currentNoteIdRef.current);
-        await saveToCloud();
+      if (currentNoteIdRef.current && hasUnsavedChanges && editor && !isSavingRef.current) {
+        const currentContent = editor.getJSON();
+        const currentText = editor.getText();
+        const title = currentText?.split('\n')[0].slice(0, 50) || 'Untitled Thought';
+        
+        await saveToFile(currentNoteIdRef.current, title, currentText, currentContent);
       }
     };
 
     savePreviousNote().then(() => {
       currentNoteIdRef.current = id;
+      setHasUnsavedChanges(false);
       loadNote();
     });
-  }, [id, editor, saveToCloud]);
+  }, [id, editor, hasUnsavedChanges, saveToFile]);
 
   // Save on unmount
   useEffect(() => {
     return () => {
-      if (pendingChangesRef.current && editor && note?.id) {
-        console.log('Saving note on unmount:', note.id);
-        // Synchronous save on unmount
+      if (hasUnsavedChanges && editor && note?.id && !isSavingRef.current) {
         const currentContent = editor.getJSON();
         const currentText = editor.getText();
         const title = currentText?.split('\n')[0].slice(0, 50) || 'Untitled Thought';
         
+        // Synchronous save on unmount
         updateNote(note.id, {
           content: currentContent,
           plainText: currentText,
@@ -175,7 +176,7 @@ export default function EditorPage() {
         }).catch(console.error);
       }
     };
-  }, [editor, note?.id, updateNote]);
+  }, [editor, note?.id, updateNote, hasUnsavedChanges]);
 
   const loadNote = async () => {
     if (id.startsWith('temp-')) {
@@ -184,18 +185,19 @@ export default function EditorPage() {
       return;
     }
 
-    setSaveError(null);
+    if (isLoadingRef.current) return;
+    isLoadingRef.current = true;
 
     try {
       const res = await FileService.getNote(id);
 
+      // Check if we're still on the same note
       if (currentNoteIdRef.current !== id) {
         return;
       }
 
       setNote(res);
-      setLastSaved(new Date());
-      pendingChangesRef.current = false;
+      setHasUnsavedChanges(false);
       
       if (editor && !editor.isDestroyed) {
         editorUpdateRef.current = true;
@@ -210,25 +212,13 @@ export default function EditorPage() {
       }
 
       console.error('Failed to load note:', error);
-      setSaveError('Failed to load note');
       setTimeout(() => {
         navigate('/', { replace: true });
       }, 1000);
+    } finally {
+      isLoadingRef.current = false;
     }
   };
-
-  if (saveError === 'Failed to load note') {
-    return (
-      <div className="min-h-screen flex items-center justify-center theme-bg-primary">
-        <div className="text-center">
-          <X className="text-red-500 mx-auto mb-4" size={48} />
-          <p className="text-theme-primary text-lg mb-2">Note not found</p>
-          <p className="text-theme-secondary mb-4">This note may have been deleted</p>
-          <p className="text-sm text-theme-tertiary">Redirecting...</p>
-        </div>
-      </div>
-    );
-  }
 
   if (!note) {
     return (
@@ -245,28 +235,15 @@ export default function EditorPage() {
     <div className="flex h-screen theme-bg-primary theme-text-primary overflow-hidden flex-col">
       <div className="toolbar-themed p-3 flex items-center gap-2 flex-wrap">
         <div className="flex items-center gap-2 mr-4">
-          {saving && (
-            <div className="flex items-center gap-2 text-blue-400">
-              <Loader size={14} className="animate-spin" />
-              <span className="text-xs">Saving...</span>
+          {hasUnsavedChanges ? (
+            <div className="flex items-center gap-2 text-theme-tertiary" title="Unsaved changes">
+              <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></div>
+              <span className="text-xs">Editing...</span>
             </div>
-          )}
-          {!saving && lastSaved && !pendingChangesRef.current && (
-            <div className="flex items-center gap-2 text-green-400" title="All changes saved">
+          ) : (
+            <div className="flex items-center gap-2 text-green-400" title="All changes saved to file">
               <Check size={14} />
               <span className="text-xs">Saved</span>
-            </div>
-          )}
-          {!saving && pendingChangesRef.current && (
-            <div className="flex items-center gap-2 text-yellow-400">
-              <Cloud size={14} />
-              <span className="text-xs">Saving...</span>
-            </div>
-          )}
-          {saveError && (
-            <div className="flex items-center gap-2 text-red-400">
-              <X size={14} />
-              <span className="text-xs">{saveError}</span>
             </div>
           )}
         </div>

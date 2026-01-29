@@ -1,5 +1,26 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+/**
+ * ====== MESSY NOTES - LOCAL FILE STORAGE ======
+ * 
+ * This is a LOCAL-FIRST application. All data is stored on the user's computer.
+ * 
+ * FILE STRUCTURE:
+ * ~/Documents/MessyNotes/
+ * ├── notes/              ← Notes as .md files with YAML frontmatter
+ * │   ├── {uuid}.md
+ * │   └── {uuid}.md
+ * ├── canvas/             ← Canvas data as JSON (per-note mindmaps)
+ * │   ├── {uuid}.json
+ * │   └── {uuid}.json
+ * ├── graph.json          ← Global graph (node positions & connections)
+ * └── attachments/        ← Future: file attachments
+ * 
+ * NO CLOUD SYNC - Everything stays on the user's machine!
+ * 
+ * ===============================================
+ */
+
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -55,22 +76,27 @@ struct AppState {
 }
 
 impl AppState {
+    /// Returns path to notes directory: ~/Documents/MessyNotes/notes/
     fn notes_dir(&self) -> PathBuf {
         self.data_dir.join("notes")
     }
 
+    /// Returns path to attachments directory: ~/Documents/MessyNotes/attachments/
     fn attachments_dir(&self) -> PathBuf {
         self.data_dir.join("attachments")
     }
 
+    /// Returns path to graph file: ~/Documents/MessyNotes/graph.json
     fn graph_file(&self) -> PathBuf {
         self.data_dir.join("graph.json")
     }
 
+    /// Returns path to canvas file: ~/Documents/MessyNotes/canvas/{note_id}.json
     fn canvas_file(&self, note_id: &str) -> PathBuf {
         self.data_dir.join("canvas").join(format!("{}.json", note_id))
     }
 
+    /// Ensures all required directories exist
     fn ensure_dirs(&self) -> Result<()> {
         fs::create_dir_all(&self.data_dir)?;
         fs::create_dir_all(self.notes_dir())?;
@@ -91,6 +117,7 @@ async fn init_app(app_handle: tauri::AppHandle) -> Result<String, String> {
 }
 
 // ==================== NOTE OPERATIONS ====================
+// Each note is stored as: ~/Documents/MessyNotes/notes/{uuid}.md
 
 #[tauri::command]
 async fn get_notes(state: State<'_, AppState>) -> Result<Vec<Note>, String> {
@@ -350,6 +377,7 @@ async fn delete_all_notes(state: State<'_, AppState>) -> Result<usize, String> {
 }
 
 // ==================== GRAPH OPERATIONS ====================
+// Graph is stored as: ~/Documents/MessyNotes/graph.json
 
 #[tauri::command]
 async fn get_graph(state: State<'_, AppState>) -> Result<GraphMetadata, String> {
@@ -380,6 +408,7 @@ async fn save_graph_data(
 }
 
 // ==================== CANVAS OPERATIONS ====================
+// Canvas is stored as: ~/Documents/MessyNotes/canvas/{note_id}.json
 
 #[tauri::command]
 async fn get_canvas(note_id: String, state: State<'_, AppState>) -> Result<CanvasData, String> {
@@ -418,6 +447,7 @@ async fn save_canvas_data(
 
 // ==================== HELPER FUNCTIONS ====================
 
+/// Saves a note to disk as a .md file with YAML frontmatter
 fn save_note(note: &Note, state: &AppState) -> Result<(), String> {
     let metadata = serde_json::json!({
         "title": note.title,
@@ -445,6 +475,7 @@ fn save_note(note: &Note, state: &AppState) -> Result<(), String> {
     Ok(())
 }
 
+/// Saves graph data to disk as JSON
 fn save_graph(graph: &GraphMetadata, state: &AppState) -> Result<(), String> {
     let json = serde_json::to_string_pretty(graph)
         .map_err(|e| format!("Failed to serialize graph: {}", e))?;
@@ -455,6 +486,7 @@ fn save_graph(graph: &GraphMetadata, state: &AppState) -> Result<(), String> {
     Ok(())
 }
 
+/// Parses a markdown file with YAML frontmatter
 fn parse_markdown_with_frontmatter(content: &str) -> (serde_json::Value, String) {
     let parts: Vec<&str> = content.split("---").collect();
     
