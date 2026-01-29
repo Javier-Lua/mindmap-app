@@ -644,18 +644,23 @@ const GraphView = ({
         const nodeMap = {};
         currentNodes.forEach(n => { nodeMap[n.id] = n; });
 
-        const k = 0.05;
-        const repulsion = 10000;
-        const damping = 0.9;
-        const centerForce = 0.005;
+        // PHYSICS PARAMETERS
+        const springStrength = 0.03;      // Less bouncy springs (was 0.05)
+        const repulsionStrength = 5000;    // Less repulsion, more clustering (was 10000)
+        const damping = 0.85;              // Much more damping, faster settling (was 0.9)
+        const centerForce = 0.01;          // Stronger pull to center (was 0.005)
+        const idealEdgeLength = 200;       // More space between connected nodes (was 150)
 
+        // REPULSION: All nodes push each other apart
         for (let i = 0; i < currentNodes.length; i++) {
           for (let j = i + 1; j < currentNodes.length; j++) {
             const dx = currentNodes[i].x - currentNodes[j].x;
             const dy = currentNodes[i].y - currentNodes[j].y;
             const distSq = dx * dx + dy * dy;
             const dist = Math.sqrt(distSq) || 0.1;
-            const f = repulsion / (distSq + 100);
+            
+            // Softer repulsion for more organic clustering
+            const f = repulsionStrength / (distSq + 200);  // Added offset for gentler falloff
 
             const fx = (dx / dist) * f;
             const fy = (dy / dist) * f;
@@ -671,6 +676,7 @@ const GraphView = ({
           }
         }
 
+        // ATTRACTION: Connected nodes pull together (spring force)
         (prevData.edges || []).forEach(edge => {
           const s = nodeMap[edge.source];
           const t = nodeMap[edge.target];
@@ -678,7 +684,9 @@ const GraphView = ({
             const dx = t.x - s.x;
             const dy = t.y - s.y;
             const dist = Math.sqrt(dx * dx + dy * dy) || 0.1;
-            const force = (dist - 150) * k;
+            
+            // Spring force with ideal length
+            const force = (dist - idealEdgeLength) * springStrength;
 
             const fx = (dx / dist) * force;
             const fy = (dy / dist) * force;
@@ -694,18 +702,23 @@ const GraphView = ({
           }
         });
 
+        // UPDATE POSITIONS AND APPLY FORCES
         currentNodes.forEach(n => {
           if (n.id === draggingNodeId) return;
 
+          // Gentle pull toward center for cohesion
           n.vx -= n.x * centerForce;
           n.vy -= n.y * centerForce;
 
+          // Strong damping for quick settling
           n.vx *= damping;
           n.vy *= damping;
 
+          // Update position
           n.x += n.vx;
           n.y += n.vy;
 
+          // Save to metadata
           nextMetadata[n.id] = {
             x: n.x,
             y: n.y,
@@ -719,11 +732,12 @@ const GraphView = ({
         const updated = { ...prevData, metadata: nextMetadata };
         GraphStorage.set(updated);
 
+        // Stop simulation when nodes have settled (lower threshold for faster stop)
         const maxVelocity = Math.max(
           ...currentNodes.map(n => Math.sqrt(n.vx * n.vx + n.vy * n.vy))
         );
         
-        if (maxVelocity < 0.01) {
+        if (maxVelocity < 0.05) {  // Slightly higher threshold (was 0.01) for more natural stopping
           cancelAnimationFrame(animationRef.current);
           return prevData;
         }

@@ -1,5 +1,21 @@
 import { invoke } from '@tauri-apps/api/tauri';
 
+/**
+ * ====== FILE SERVICE ======
+ * 
+ * This service handles all file operations with the Tauri backend.
+ * 
+ * Files are stored in:
+ * - Notes: ~/Documents/MessyNotes/notes/{id}.md
+ * - Graph: ~/Documents/MessyNotes/graph.json
+ * - Canvas: ~/Documents/MessyNotes/canvas/{id}.json
+ * 
+ * All operations are synchronous file I/O on the user's local disk.
+ * No network requests, no cloud sync.
+ * 
+ * ==========================
+ */
+
 class FileService {
   async init() {
     try {
@@ -36,7 +52,7 @@ class FileService {
     try {
       return await invoke('create_note', {
         title: data.title,
-        rawText: data.rawText,
+        rawText: data.rawText || '',  // Ensure rawText is always set
         content: data.content,
         sticky: data.sticky,
         ephemeral: data.ephemeral,
@@ -54,7 +70,7 @@ class FileService {
       return await invoke('update_note', {
         id,
         title: updates.title,
-        rawText: updates.plainText || updates.rawText,
+        rawText: updates.rawText || updates.plainText || '',  // Support both field names, default to empty
         content: updates.content,
         sticky: updates.sticky,
         ephemeral: updates.ephemeral,

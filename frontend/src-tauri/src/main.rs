@@ -147,11 +147,12 @@ async fn get_notes(state: State<'_, AppState>) -> Result<Vec<Note>, String> {
                     .unwrap_or("Untitled")
                     .to_string();
                 
-                notes.push(Note {
-                    id,
-                    title,
-                    raw_text: Some(raw_text.clone()),
-                    content: Some(serde_json::json!({
+                // CRITICAL: Use stored content if available, otherwise reconstruct from rawText
+                let note_content = if let Some(stored_content) = metadata.get("content") {
+                    Some(stored_content.clone())
+                } else if !raw_text.is_empty() {
+                    // Fallback for old notes without stored content
+                    Some(serde_json::json!({
                         "type": "doc",
                         "content": [{
                             "type": "paragraph",
@@ -160,7 +161,19 @@ async fn get_notes(state: State<'_, AppState>) -> Result<Vec<Note>, String> {
                                 "text": raw_text
                             }]
                         }]
-                    })),
+                    }))
+                } else {
+                    Some(serde_json::json!({
+                        "type": "doc",
+                        "content": []
+                    }))
+                };
+                
+                notes.push(Note {
+                    id,
+                    title,
+                    raw_text: Some(raw_text.clone()),
+                    content: note_content,
                     updated_at: metadata.get("updatedAt")
                         .and_then(|v| v.as_str())
                         .unwrap_or(&Utc::now().to_rfc3339())
@@ -213,11 +226,12 @@ async fn get_note(id: String, state: State<'_, AppState>) -> Result<Note, String
         .unwrap_or("Untitled")
         .to_string();
     
-    Ok(Note {
-        id,
-        title,
-        raw_text: Some(raw_text.clone()),
-        content: Some(serde_json::json!({
+    // CRITICAL: Use stored content if available, otherwise reconstruct from rawText
+    let note_content = if let Some(stored_content) = metadata.get("content") {
+        Some(stored_content.clone())
+    } else if !raw_text.is_empty() {
+        // Fallback for old notes without stored content
+        Some(serde_json::json!({
             "type": "doc",
             "content": [{
                 "type": "paragraph",
@@ -226,7 +240,19 @@ async fn get_note(id: String, state: State<'_, AppState>) -> Result<Note, String
                     "text": raw_text
                 }]
             }]
-        })),
+        }))
+    } else {
+        Some(serde_json::json!({
+            "type": "doc",
+            "content": []
+        }))
+    };
+    
+    Ok(Note {
+        id,
+        title,
+        raw_text: Some(raw_text),
+        content: note_content,
         updated_at: metadata.get("updatedAt")
             .and_then(|v| v.as_str())
             .unwrap_or(&Utc::now().to_rfc3339())
@@ -448,6 +474,7 @@ async fn save_canvas_data(
 // ==================== HELPER FUNCTIONS ====================
 
 /// Saves a note to disk as a .md file with YAML frontmatter
+/// Stores BOTH the TipTap content structure AND rawText for compatibility
 fn save_note(note: &Note, state: &AppState) -> Result<(), String> {
     let metadata = serde_json::json!({
         "title": note.title,
@@ -458,6 +485,7 @@ fn save_note(note: &Note, state: &AppState) -> Result<(), String> {
         "archived": note.archived,
         "type": note.note_type,
         "color": note.color,
+        "content": note.content,  // CRITICAL: Store the TipTap JSON structure
     });
     
     let frontmatter = serde_json::to_string_pretty(&metadata)

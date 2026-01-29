@@ -28,7 +28,7 @@ import FileService from '../services/FileService';
  * - Plain text content
  * 
  * Saves happen directly to your local filesystem (no cloud).
- * Changes are auto-saved 1 second after you stop typing.
+ * Changes are auto-saved 100ms after you stop typing (near-instant).
  * 
  * ======================================
  */
@@ -105,12 +105,12 @@ export default function EditorPage() {
       
       setHasUnsavedChanges(true);
       
-      // Debounced save to disk
+      // Near-instant save (100ms debounce to avoid excessive writes while typing fast)
       debouncedSave(note.id, title, text, json);
     },
   }, [note?.id]);
 
-  // Save to local file system
+  // Save to local file system with proper content structure
   const saveToFile = useCallback(async (noteId, title, text, content) => {
     if (isSavingRef.current || currentNoteIdRef.current !== noteId) return;
 
@@ -119,7 +119,7 @@ export default function EditorPage() {
     try {
       await updateNote(noteId, {
         content,
-        plainText: text,
+        rawText: text,  // Store BOTH content and rawText
         title
       });
 
@@ -134,7 +134,8 @@ export default function EditorPage() {
     }
   }, [updateNote]);
 
-  const debouncedSave = useDebounce(saveToFile, 1000);
+  // 100ms debounce for near-instant saves
+  const debouncedSave = useDebounce(saveToFile, 100);
 
   // Load note when ID changes
   useEffect(() => {
@@ -171,7 +172,7 @@ export default function EditorPage() {
         // Synchronous save on unmount
         updateNote(note.id, {
           content: currentContent,
-          plainText: currentText,
+          rawText: currentText,
           title
         }).catch(console.error);
       }
@@ -201,7 +202,23 @@ export default function EditorPage() {
       
       if (editor && !editor.isDestroyed) {
         editorUpdateRef.current = true;
-        editor.commands.setContent(res.content || '');
+        
+        // Use the stored content structure if available
+        if (res.content && typeof res.content === 'object') {
+          editor.commands.setContent(res.content);
+        } else if (res.rawText) {
+          // Fallback: create simple structure from rawText
+          editor.commands.setContent({
+            type: 'doc',
+            content: [{
+              type: 'paragraph',
+              content: [{ type: 'text', text: res.rawText }]
+            }]
+          });
+        } else {
+          editor.commands.setContent('');
+        }
+        
         setTimeout(() => {
           editorUpdateRef.current = false;
         }, 0);
@@ -236,9 +253,9 @@ export default function EditorPage() {
       <div className="toolbar-themed p-3 flex items-center gap-2 flex-wrap">
         <div className="flex items-center gap-2 mr-4">
           {hasUnsavedChanges ? (
-            <div className="flex items-center gap-2 text-theme-tertiary" title="Unsaved changes">
+            <div className="flex items-center gap-2 text-theme-tertiary" title="Saving...">
               <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></div>
-              <span className="text-xs">Editing...</span>
+              <span className="text-xs">Saving...</span>
             </div>
           ) : (
             <div className="flex items-center gap-2 text-green-400" title="All changes saved to file">
