@@ -29,6 +29,7 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
   
   // CRITICAL: Use a ref to track if we're in the middle of a drag operation
   const isDraggingRef = useRef(false);
+  const dragDataRef = useRef(null); // Store drag data persistently
 
   // Auto-expand folders on mount
   useEffect(() => {
@@ -89,6 +90,13 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
   };
 
   const handleNoteClick = (noteId, e) => {
+    // Don't handle click if we just finished dragging
+    if (isDraggingRef.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    
     if (e.target.closest('.delete-button') || e.target.closest('.pin-button')) {
       return;
     }
@@ -167,13 +175,15 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     isDraggingRef.current = true;
     
     // Set drag data
-    const dragData = JSON.stringify({ type: itemType, id: itemId });
+    const dragData = { type: itemType, id: itemId };
+    dragDataRef.current = dragData; // Store persistently
+    
     e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('application/json', dragData);
-    e.dataTransfer.setData('text/plain', dragData); // Fallback
+    e.dataTransfer.setData('application/json', JSON.stringify(dragData));
+    e.dataTransfer.setData('text/plain', JSON.stringify(dragData)); // Fallback
     
     // Update state
-    setDraggedItem({ type: itemType, id: itemId });
+    setDraggedItem(dragData);
     
     // Add visual feedback
     setTimeout(() => {
@@ -187,31 +197,36 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
   const handleDragEnd = useCallback((e) => {
     console.log('🔴 DRAG END');
     
-    isDraggingRef.current = false;
-    
-    // Reset visual feedback
+    // Reset visual feedback immediately
     if (e.target) {
       e.target.style.opacity = '1';
     }
     
-    // Clear all drag state after a short delay to allow drop to complete
+    // CRITICAL: Delay clearing state to allow drop event to fire
     setTimeout(() => {
+      isDraggingRef.current = false;
+      dragDataRef.current = null;
       setDraggedItem(null);
       setDragOverItem(null);
       setDropPosition(null);
-    }, 100);
+    }, 250); // Increased delay
   }, []);
 
   const handleDragEnter = useCallback((e, itemType, itemId) => {
+    // CRITICAL: Must prevent default to allow drop
     e.preventDefault();
     e.stopPropagation();
     
-    if (!isDraggingRef.current) return;
-    
     console.log('🟡 DRAG ENTER:', itemType, itemId);
     
+    // Set drop effect immediately
+    e.dataTransfer.dropEffect = 'move';
+    
+    if (!isDraggingRef.current) return;
+    
     // Don't highlight self
-    if (draggedItem && draggedItem.type === itemType && draggedItem.id === itemId) {
+    const dragData = dragDataRef.current || draggedItem;
+    if (dragData && dragData.type === itemType && dragData.id === itemId) {
       return;
     }
     
@@ -219,30 +234,27 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
   }, [draggedItem]);
 
   const handleDragOver = useCallback((e, itemType, itemId) => {
-    e.preventDefault(); // CRITICAL: Must prevent default to allow drop
+    // CRITICAL: Must prevent default to allow drop
+    e.preventDefault();
     e.stopPropagation();
-    
-    if (!isDraggingRef.current) return;
     
     // Set drop effect
     e.dataTransfer.dropEffect = 'move';
     
-    if (!draggedItem) {
-      // Try to read from dataTransfer
-      try {
-        const data = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain');
-        if (data) {
-          const parsed = JSON.parse(data);
-          setDraggedItem(parsed);
-        }
-      } catch (err) {
-        // Ignore
-      }
+    // Log occasionally (not every frame)
+    if (Math.random() < 0.01) {
+      console.log('⚡ DRAG OVER:', itemType, itemId, 'dropEffect:', e.dataTransfer.dropEffect);
+    }
+    
+    const dragData = dragDataRef.current || draggedItem;
+    
+    if (!dragData) {
+      // Still allow drop even without drag data (we'll get it in drop event)
       return;
     }
     
     // Don't process self
-    if (draggedItem.type === itemType && draggedItem.id === itemId) {
+    if (dragData.type === itemType && dragData.id === itemId) {
       return;
     }
     
@@ -289,15 +301,15 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     e.preventDefault();
     e.stopPropagation();
     
-    console.log('🟣 DROP on', targetType, targetId, 'at position', dropPosition);
+    console.log('🟣 DROP CALLED! on', targetType, targetId);
+    console.log('   isDraggingRef.current:', isDraggingRef.current);
+    console.log('   dropPosition:', dropPosition);
+    console.log('   dragDataRef.current:', dragDataRef.current);
+    console.log('   draggedItem:', draggedItem);
     
-    if (!isDraggingRef.current) {
-      console.warn('Drop called but not dragging');
-      return;
-    }
+    // Get drag data from ref (most reliable source)
+    let dragData = dragDataRef.current || draggedItem;
     
-    // Get drag data
-    let dragData = draggedItem;
     if (!dragData) {
       try {
         const dataStr = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain');
@@ -306,12 +318,11 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
         }
       } catch (err) {
         console.error('Failed to parse drag data:', err);
-        return;
       }
     }
     
     if (!dragData || !dropPosition) {
-      console.warn('No drag data or drop position');
+      console.warn('No drag data or drop position', { dragData, dropPosition });
       return;
     }
     
@@ -323,7 +334,7 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
       return;
     }
     
-    // Store current drop position before clearing state
+    // Store current drop position before any async operations
     const currentDropPosition = dropPosition;
     
     try {
@@ -467,24 +478,30 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     
     console.log('🟣 DROP ON ROOT');
     
-    if (!isDraggingRef.current) return;
+    // Get drag data from ref
+    const dragData = dragDataRef.current || draggedItem;
     
-    // Get drag data
-    let dragData = draggedItem;
     if (!dragData) {
       try {
         const dataStr = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain');
         if (dataStr) {
-          dragData = JSON.parse(dataStr);
+          const parsed = JSON.parse(dataStr);
+          dragDataRef.current = parsed;
         }
       } catch (err) {
+        console.error('Failed to get drag data:', err);
         return;
       }
     }
     
-    if (!dragData) return;
+    const finalDragData = dragDataRef.current || dragData;
     
-    const { type, id } = dragData;
+    if (!finalDragData) {
+      console.warn('No drag data available for root drop');
+      return;
+    }
+    
+    const { type, id } = finalDragData;
     
     try {
       console.log(`  → Moving ${type} ${id} to root`);
@@ -620,41 +637,71 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     return (
       <div
         key={note.id}
-        draggable={true}
-        onDragStart={(e) => handleDragStart(e, 'note', note.id)}
-        onDragEnd={handleDragEnd}
-        onDragEnter={(e) => handleDragEnter(e, 'note', note.id)}
-        onDragOver={(e) => handleDragOver(e, 'note', note.id)}
-        onDragLeave={handleDragLeave}
-        onDrop={(e) => handleDrop(e, 'note', note.id)}
-        onClick={(e) => handleNoteClick(note.id, e)}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
-        className={`w-full flex items-center gap-2 px-2 py-2 rounded text-xs text-left transition-all duration-200 group cursor-pointer select-none ${
-          isSelected 
-            ? 'bg-theme-tertiary text-theme-primary ring-2 ring-purple-500 ring-opacity-30' 
-            : 'theme-bg-hover text-theme-secondary'
-        } ${isDragging ? 'opacity-40' : ''} ${dropIndicatorClass}`}
+        className="relative"
       >
-        <FileText size={12} className={isPinned ? 'text-yellow-400' : 'text-theme-tertiary'} />
-        <div className="flex-1 min-w-0">
-          <div className="truncate">{note.title}</div>
-          <div className="text-[10px] text-theme-tertiary">
-            {new Date(note.updatedAt).toLocaleDateString()}
-          </div>
-        </div>
-        <button
-          onClick={(e) => handleTogglePin(note.id, isPinned, e)}
-          className="pin-button opacity-0 group-hover:opacity-100 p-0.5 hover:bg-yellow-600 rounded transition-opacity cursor-pointer"
-          title={isPinned ? "Unpin" : "Pin"}
-        >
-          <Star size={10} className={isPinned ? 'text-yellow-400' : 'text-gray-400'} fill={isPinned ? 'currentColor' : 'none'} />
-        </button>
+        {/* Drop zone overlay - captures all drop events */}
         <div
-          onClick={(e) => handleDeleteNote(note.id, e)}
-          className="delete-button opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-600 rounded transition-opacity cursor-pointer"
-          title="Delete"
+          draggable={true}
+          onDragStart={(e) => {
+            e.stopPropagation();
+            handleDragStart(e, 'note', note.id);
+          }}
+          onDragEnd={(e) => {
+            e.stopPropagation();
+            handleDragEnd(e);
+          }}
+          onDragEnter={(e) => {
+            e.stopPropagation();
+            handleDragEnter(e, 'note', note.id);
+          }}
+          onDragOver={(e) => {
+            e.stopPropagation();
+            handleDragOver(e, 'note', note.id);
+          }}
+          onDrop={(e) => {
+            e.stopPropagation();
+            console.log('🟣🟣🟣 DROP EVENT FIRED on note:', note.id);
+            handleDrop(e, 'note', note.id);
+          }}
+          onClick={(e) => {
+            if (!isDraggingRef.current) {
+              handleNoteClick(note.id, e);
+            }
+          }}
+          className={`w-full flex items-center gap-2 px-2 py-2 rounded text-xs text-left transition-all duration-200 group cursor-pointer select-none ${
+            isSelected 
+              ? 'bg-theme-tertiary text-theme-primary ring-2 ring-purple-500 ring-opacity-30' 
+              : 'theme-bg-hover text-theme-secondary'
+          } ${isDragging ? 'opacity-40' : ''} ${dropIndicatorClass}`}
         >
-          <Trash2 size={10} className="text-red-400" />
+          <FileText size={12} className={isPinned ? 'text-yellow-400' : 'text-theme-tertiary'} />
+          <div className="flex-1 min-w-0 pointer-events-none">
+            <div className="truncate">{note.title}</div>
+            <div className="text-[10px] text-theme-tertiary">
+              {new Date(note.updatedAt).toLocaleDateString()}
+            </div>
+          </div>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleTogglePin(note.id, isPinned, e);
+            }}
+            className="pin-button opacity-0 group-hover:opacity-100 p-0.5 hover:bg-yellow-600 rounded transition-opacity cursor-pointer z-10"
+            title={isPinned ? "Unpin" : "Pin"}
+          >
+            <Star size={10} className={isPinned ? 'text-yellow-400' : 'text-gray-400'} fill={isPinned ? 'currentColor' : 'none'} />
+          </button>
+          <div
+            onClick={(e) => {
+              e.stopPropagation();
+              handleDeleteNote(note.id, e);
+            }}
+            className="delete-button opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-600 rounded transition-opacity cursor-pointer z-10"
+            title="Delete"
+          >
+            <Trash2 size={10} className="text-red-400" />
+          </div>
         </div>
       </div>
     );
@@ -693,6 +740,10 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
           onDragOver={(e) => handleDragOver(e, 'folder', folder.id)}
           onDragLeave={handleDragLeave}
           onDrop={(e) => handleDrop(e, 'folder', folder.id)}
+          onDropCapture={(e) => {
+            console.log('📦 DROP CAPTURE on folder:', folder.id);
+            // Don't prevent default here, let it bubble to onDrop
+          }}
         >
           <div 
             className={`w-full flex items-center gap-1 px-2 py-2 rounded text-xs theme-bg-hover transition-all duration-200 cursor-pointer select-none ${
