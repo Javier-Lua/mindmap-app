@@ -652,14 +652,17 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
             handleDragEnd(e);
           }}
           onDragEnter={(e) => {
+            e.preventDefault(); // CRITICAL: Must be first!
             e.stopPropagation();
             handleDragEnter(e, 'note', note.id);
           }}
           onDragOver={(e) => {
+            e.preventDefault(); // CRITICAL: Must be first!
             e.stopPropagation();
             handleDragOver(e, 'note', note.id);
           }}
           onDrop={(e) => {
+            e.preventDefault(); // CRITICAL: Must be first!
             e.stopPropagation();
             console.log('🟣🟣🟣 DROP EVENT FIRED on note:', note.id);
             handleDrop(e, 'note', note.id);
@@ -736,13 +739,21 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
           draggable={!isEditing && !showMenu}
           onDragStart={(e) => handleDragStart(e, 'folder', folder.id)}
           onDragEnd={handleDragEnd}
-          onDragEnter={(e) => handleDragEnter(e, 'folder', folder.id)}
-          onDragOver={(e) => handleDragOver(e, 'folder', folder.id)}
+          onDragEnter={(e) => {
+            e.preventDefault(); // CRITICAL: Must be first!
+            e.stopPropagation();
+            handleDragEnter(e, 'folder', folder.id);
+          }}
+          onDragOver={(e) => {
+            e.preventDefault(); // CRITICAL: Must be first!
+            e.stopPropagation();
+            handleDragOver(e, 'folder', folder.id);
+          }}
           onDragLeave={handleDragLeave}
-          onDrop={(e) => handleDrop(e, 'folder', folder.id)}
-          onDropCapture={(e) => {
-            console.log('📦 DROP CAPTURE on folder:', folder.id);
-            // Don't prevent default here, let it bubble to onDrop
+          onDrop={(e) => {
+            e.preventDefault(); // CRITICAL: Must be first!
+            e.stopPropagation();
+            handleDrop(e, 'folder', folder.id);
           }}
         >
           <div 
