@@ -517,12 +517,7 @@ const GraphView = ({ onNoteClick }) => {
   const hasDragged = useRef(false);
   const containerRef = useRef(null);
   const animationRef = useRef(0);
-  const graphDataRef = useRef(graphData);
-
-  // Keep ref in sync
-  useEffect(() => {
-    graphDataRef.current = graphData;
-  }, [graphData]);
+  const saveTimeoutRef = useRef(null);
 
   // Save viewport changes
   useEffect(() => {
@@ -543,18 +538,42 @@ const GraphView = ({ onNoteClick }) => {
     loadFromFile();
   }, []);
   
-  // Save graph data on window close
+  // Auto-save graph data when it changes (debounced)
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      GraphStorage.set(graphDataRef.current);
-    };
-    
-    window.addEventListener('beforeunload', handleBeforeUnload);
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = setTimeout(async () => {
+      console.log('💾 Auto-saving graph data:', {
+        nodesCount: Object.keys(graphData.metadata || {}).length,
+        edgesCount: (graphData.edges || []).length
+      });
+      
+      try {
+        await GraphStorage.set(graphData);
+        console.log('✅ Graph saved successfully');
+      } catch (error) {
+        console.error('❌ Failed to save graph:', error);
+      }
+    }, 500);
+
     return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-      GraphStorage.set(graphDataRef.current);
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
     };
-  }, []);
+  }, [graphData]);
+
+  // Save immediately on unmount
+  useEffect(() => {
+    return () => {
+      console.log('🔴 GraphView unmounting, saving immediately');
+      GraphStorage.set(graphData).catch(err => 
+        console.error('Failed to save on unmount:', err)
+      );
+    };
+  }, [graphData]);
 
   const nodes = useMemo(() => {
     return notes
@@ -1199,14 +1218,7 @@ const CanvasView = ({ onBack, conceptName, conceptId, initialData, onSave }) => 
   
   const contentEditableRef = useRef(null);
 
-  const nodesRef = useRef(nodes);
-  const edgesRef = useRef(edges);
   const hasLoadedDataRef = useRef(false);
-
-  useEffect(() => {
-    nodesRef.current = nodes;
-    edgesRef.current = edges;
-  }, [nodes, edges]);
 
   useEffect(() => {
     hasLoadedDataRef.current = true;
@@ -1230,14 +1242,14 @@ const CanvasView = ({ onBack, conceptName, conceptId, initialData, onSave }) => 
       if (hasLoadedDataRef.current) {
         console.log('🔴 Unmounting CanvasView - saving canvas');
         onSaveRef.current(conceptId, { 
-          nodes: nodesRef.current, 
-          edges: edgesRef.current 
+          nodes,  // <-- Use state directly!
+          edges   // <-- Use state directly!
         });
       } else {
         console.log('🟡 Unmounting CanvasView - skipping save (no data loaded yet)');
       }
     };
-  }, [conceptId]);
+  }, [conceptId, nodes, edges]);
 
   const getMouseScreenPos = useCallback((e) => {
     if (!containerRef.current) return { x: 0, y: 0 };

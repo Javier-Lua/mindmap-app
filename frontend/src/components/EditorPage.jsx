@@ -95,8 +95,14 @@ export default function EditorPage() {
       },
     },
     onUpdate: ({ editor }) => {
-      // Ignore programmatic updates
-      if (editorUpdateRef.current || !note?.id) return;
+      // CRITICAL: Get current note ID from ref, not closure
+      const currentId = currentNoteIdRef.current;
+      
+      // Ignore programmatic updates or if no note loaded
+      if (editorUpdateRef.current || !currentId) {
+        console.log('⏭️ Ignoring editor update (programmatic or no note)');
+        return;
+      }
       
       const json = editor.getJSON();
       const text = editor.getText();
@@ -108,22 +114,70 @@ export default function EditorPage() {
         rawText: text
       };
 
-      console.log('✏️ Editor updated, title:', title);
+      console.log('✏️ Editor updated for note:', currentId, 'title:', title);
 
       // 1. Update local state immediately
-      setNote(prev => ({
-        ...prev,
-        ...updates
-      }));
+      setNote(prev => {
+        // Only update if we're still on the same note
+        if (prev?.id !== currentId) {
+          console.warn('⚠️ Note changed during update, ignoring');
+          return prev;
+        }
+        return {
+          ...prev,
+          ...updates
+        };
+      });
 
       // 2. Update context immediately (this updates sidebar instantly)
-      console.log('🌐 Calling updateNoteLocal for:', note.id);
-      updateNoteLocal(note.id, updates);
+      console.log('🌐 Calling updateNoteLocal for:', currentId);
+      updateNoteLocal(currentId, updates);
 
       // 3. Schedule background save to file system
-      scheduleSave(note.id, updates);
+      scheduleSave(currentId, updates);
     }
-  }, [note?.id, updateNoteLocal, scheduleSave]);
+  }, [updateNoteLocal, scheduleSave]); // REMOVED note?.id dependency!
+
+  // Update editor content when note changes
+  useEffect(() => {
+    if (!editor || !note || editor.isDestroyed) {
+      return;
+    }
+
+    // Don't update if we're currently editing
+    if (document.activeElement?.closest('.ProseMirror')) {
+      console.log('⏭️ Skipping editor update - user is typing');
+      return;
+    }
+
+    console.log('🔄 Note changed, updating editor content for:', note.id);
+    
+    editorUpdateRef.current = true;
+    
+    try {
+      if (note.content && typeof note.content === 'object') {
+        console.log('   Setting content from note.content object');
+        editor.commands.setContent(note.content);
+      } else if (note.rawText && note.rawText.trim()) {
+        console.log('   Setting content from note.rawText:', note.rawText.substring(0, 50));
+        editor.commands.setContent({
+          type: 'doc',
+          content: [{
+            type: 'paragraph',
+            content: [{ type: 'text', text: note.rawText }]
+          }]
+        });
+      } else {
+        console.log('   Setting empty content');
+        editor.commands.setContent('');
+      }
+    } finally {
+      // Reset the flag after a short delay to allow the update to complete
+      setTimeout(() => {
+        editorUpdateRef.current = false;
+      }, 100);
+    }
+  }, [editor, note?.id]); // Only depend on note ID, not full note object
 
   // Load note when ID changes
   useEffect(() => {
@@ -183,7 +237,7 @@ export default function EditorPage() {
     isLoadingRef.current = true;
 
     try {
-      // FIXED: Try context first, but validate it has actual content
+      // Check if note is already in context with actual content
       console.log('🔍 Checking context for note:', id);
       const cachedNote = getNote(id);
       console.log('📦 Context returned:', cachedNote ? {
@@ -212,35 +266,16 @@ export default function EditorPage() {
       );
 
       if (hasActualContent) {
-        console.log('✅ Using cached note from context (has content)');
-        setNote(cachedNote);
+        console.log('✅ Using cached note from context (has actual content)');
         
-        if (editor && !editor.isDestroyed) {
-          editorUpdateRef.current = true;
-          console.log('📄 Setting editor content from cache');
-          
-          if (cachedNote.content && typeof cachedNote.content === 'object') {
-            console.log('   Using content object');
-            editor.commands.setContent(cachedNote.content);
-          } else if (cachedNote.rawText) {
-            console.log('   Using rawText:', cachedNote.rawText.substring(0, 50));
-            editor.commands.setContent({
-              type: 'doc',
-              content: [{
-                type: 'paragraph',
-                content: [{ type: 'text', text: cachedNote.rawText }]
-              }]
-            });
-          } else {
-            console.log('   No content, using empty');
-            editor.commands.setContent('');
-          }
-          
-          setTimeout(() => {
-            editorUpdateRef.current = false;
-          }, 0);
+        // Check if we're still on the same note
+        if (currentNoteIdRef.current !== id) {
+          console.log('⚠️ Note ID changed during load, aborting');
+          return;
         }
         
+        // Just set the note - the useEffect will update the editor
+        setNote(cachedNote);
         isLoadingRef.current = false;
         return;
       }
@@ -262,30 +297,9 @@ export default function EditorPage() {
         return;
       }
 
+      // Just set the note - the useEffect will update the editor
       setNote(res);
       
-      if (editor && !editor.isDestroyed) {
-        editorUpdateRef.current = true;
-        console.log('📄 Setting editor content from file');
-        
-        if (res.content && typeof res.content === 'object') {
-          editor.commands.setContent(res.content);
-        } else if (res.rawText) {
-          editor.commands.setContent({
-            type: 'doc',
-            content: [{
-              type: 'paragraph',
-              content: [{ type: 'text', text: res.rawText }]
-            }]
-          });
-        } else {
-          editor.commands.setContent('');
-        }
-        
-        setTimeout(() => {
-          editorUpdateRef.current = false;
-        }, 0);
-      }
     } catch (error) {
       if (currentNoteIdRef.current !== id) {
         return;
