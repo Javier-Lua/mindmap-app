@@ -7,19 +7,49 @@ import FileService from '../services/FileService';
 const VIEWPORT_STORAGE_KEY = 'messy-notes-viewport';
 
 const GraphStorage = {
+  _saveInProgress: false,
+  _pendingSave: null,
+  
   async get() {
     try {
       return await FileService.getGraph();
     } catch (e) {
+      console.error('Failed to get graph:', e);
       return { metadata: {}, edges: [] };
     }
   },
   
   async set(data) {
+    // If a save is in progress, queue this one
+    if (this._saveInProgress) {
+      console.log('⏳ Save already in progress, queuing...');
+      this._pendingSave = data;
+      return;
+    }
+    
+    this._saveInProgress = true;
+    
     try {
+      console.log('💾 Saving graph:', {
+        nodesCount: Object.keys(data.metadata || {}).length,
+        edgesCount: (data.edges || []).length
+      });
+      
       await FileService.saveGraph(data.metadata || {}, data.edges || []);
+      console.log('✅ Graph saved successfully');
+      
+      // If another save was queued while we were saving, process it now
+      if (this._pendingSave) {
+        const queued = this._pendingSave;
+        this._pendingSave = null;
+        this._saveInProgress = false;
+        console.log('🔄 Processing queued save...');
+        await this.set(queued);
+      }
     } catch (e) {
-      console.error('Failed to save graph:', e);
+      console.error('❌ Failed to save graph:', e);
+    } finally {
+      this._saveInProgress = false;
     }
   },
   
@@ -565,15 +595,14 @@ const GraphView = ({ onNoteClick }) => {
     };
   }, [graphData]);
 
-  // Save immediately on unmount
+  // Cleanup timeout on unmount (save is handled by immediate edge saves + auto-save)
   useEffect(() => {
     return () => {
-      console.log('🔴 GraphView unmounting, saving immediately');
-      GraphStorage.set(graphData).catch(err => 
-        console.error('Failed to save on unmount:', err)
-      );
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
     };
-  }, [graphData]);
+  }, []);
 
   const nodes = useMemo(() => {
     return notes
@@ -935,10 +964,21 @@ const GraphView = ({ onNoteClick }) => {
             source: connectionStartId,
             target: targetNode.id
           };
-          setGraphData(prev => ({
-            ...prev,
-            edges: [...(prev.edges || []), newEdge]
-          }));
+          const updatedGraphData = {
+            ...graphData,
+            edges: [...(graphData.edges || []), newEdge]
+          };
+          setGraphData(updatedGraphData);
+          
+          // Force immediate save when edge is added
+          if (saveTimeoutRef.current) {
+            clearTimeout(saveTimeoutRef.current);
+          }
+          GraphStorage.set(updatedGraphData).then(() => {
+            console.log('✅ Edge saved immediately');
+          }).catch(err => {
+            console.error('❌ Failed to save edge:', err);
+          });
         }
       }
     }
@@ -991,10 +1031,18 @@ const GraphView = ({ onNoteClick }) => {
       !selectedIds.has(e.target)
     );
     
-    setGraphData(prev => ({
-      ...prev,
+    const updatedGraphData = {
+      ...graphData,
       edges: updatedEdges
-    }));
+    };
+    setGraphData(updatedGraphData);
+    
+    // Force immediate save when edges are deleted
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    await GraphStorage.set(updatedGraphData);
+    console.log('✅ Edges deleted and saved immediately');
     
     for (const id of selectedIds) {
       if (nodes.some(n => n.id === id)) {
@@ -1007,7 +1055,7 @@ const GraphView = ({ onNoteClick }) => {
     }
     
     setSelectedIds(new Set());
-  }, [selectedIds, renamingNodeId, deleteNote, nodes, graphData.edges]);
+  }, [selectedIds, renamingNodeId, deleteNote, nodes, graphData]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
