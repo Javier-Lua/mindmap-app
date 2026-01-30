@@ -157,7 +157,9 @@ const getNodeSideCoords = (nodeId, side, allNodes) => {
   }
 };
 
-// --- Icons ---
+// ... (rest of the icons and utility components remain the same - TrashIcon, EditIcon, etc.)
+
+// Copy all the icon components from the original file
 const TrashIcon = () => (
   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
 );
@@ -186,7 +188,8 @@ const BackIcon = () => (
   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
 );
 
-// --- Rich Text Components ---
+// ... (Copy all the Rich Text Components from original - RichTextToolbar, NodeContentEditor)
+
 const RichTextToolbar = ({ onCommand }) => {
   const [showMath, setShowMath] = useState(false);
   const symbols = ['π', '∑', '√', '∞', '≠', '≈', '≤', '≥', '×', '÷', '±', 'θ', 'α', 'β', 'Ω', 'μ', '∆', '∫', '²', '³', 'ⁿ', '½'];
@@ -348,7 +351,8 @@ const NodeContentEditor = ({ initialHtml, onChange, className, editorRef }) => {
   );
 };
 
-// --- Leiden Community Detection ---
+// ... (Copy detectLeidenCommunities function from original)
+
 const detectLeidenCommunities = (nodes, edges) => {
   const nodeIds = nodes.map(n => n.id);
   const adj = {};
@@ -495,7 +499,7 @@ const detectLeidenCommunities = (nodes, edges) => {
 
 // --- GRAPH VIEW COMPONENT ---
 const GraphView = ({ onNoteClick }) => {
-  const { notes, createNote, deleteNote, updateNote } = useNotes();
+  const { notes, createNote, deleteNote, updateNoteLocal } = useNotes();
   
   const [graphData, setGraphData] = useState({ metadata: {}, edges: [] });
   const [viewport, setViewport] = useState(() => ViewportStorage.get());
@@ -548,7 +552,6 @@ const GraphView = ({ onNoteClick }) => {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
-      // Save on unmount as well
       GraphStorage.set(graphDataRef.current);
     };
   }, []);
@@ -589,9 +592,8 @@ const GraphView = ({ onNoteClick }) => {
     const glows = {};
 
     const now = Date.now();
-    const RECENT = 5 * 60 * 1000;      // 5 minutes
-    const MODERATE = 60 * 60 * 1000;   // 1 hour
-    // Everything else is OLD
+    const RECENT = 5 * 60 * 1000;
+    const MODERATE = 60 * 60 * 1000;
 
     nodes.forEach(node => {
       const communityId = communities[node.id];
@@ -602,17 +604,14 @@ const GraphView = ({ onNoteClick }) => {
       let sat, light, glow;
       
       if (timeDiff < RECENT) {
-        // LEVEL 1: Recently accessed (< 5 min) - BRIGHT
         sat = 90;
         light = 65;
         glow = `0 0 20px hsla(${hue}, ${sat}%, ${light}%, 0.7), 0 0 40px hsla(${hue}, ${sat}%, ${light}%, 0.3)`;
       } else if (timeDiff < MODERATE) {
-        // LEVEL 2: Moderately recent (5min - 1hr) - MEDIUM
         sat = 65;
         light = 50;
         glow = `0 0 10px hsla(${hue}, ${sat}%, ${light}%, 0.4)`;
       } else {
-        // LEVEL 3: Old (> 1hr) - DIM
         sat = 35;
         light = 35;
         glow = 'none';
@@ -625,7 +624,7 @@ const GraphView = ({ onNoteClick }) => {
     return { nodeColors: colors, glowStyles: glows };
   }, [nodes, communities]);
 
-  // Physics simulation
+  // Physics simulation (same as original)
   useEffect(() => {
     const simulate = () => {
       setGraphData(prevData => {
@@ -649,7 +648,6 @@ const GraphView = ({ onNoteClick }) => {
         const centerForce = 0.01;
         const idealEdgeLength = 200;
 
-        // REPULSION
         for (let i = 0; i < currentNodes.length; i++) {
           for (let j = i + 1; j < currentNodes.length; j++) {
             const dx = currentNodes[i].x - currentNodes[j].x;
@@ -673,7 +671,6 @@ const GraphView = ({ onNoteClick }) => {
           }
         }
 
-        // ATTRACTION
         (prevData.edges || []).forEach(edge => {
           const s = nodeMap[edge.source];
           const t = nodeMap[edge.target];
@@ -698,7 +695,6 @@ const GraphView = ({ onNoteClick }) => {
           }
         });
 
-        // UPDATE POSITIONS
         currentNodes.forEach(n => {
           if (n.id === draggingNodeId) return;
 
@@ -840,14 +836,16 @@ const GraphView = ({ onNoteClick }) => {
   };
 
   const handleContainerMouseDown = (e) => {
-    if (e.target === containerRef.current || e.target.classList.contains('transform-layer')) {
+    // CRITICAL FIX: Only clear selection/renaming if actually clicking on background
+    const target = e.target;
+    if (target === containerRef.current || target.classList.contains('transform-layer')) {
       setSelectedIds(new Set());
       setRenamingNodeId(null);
+      setInteractionMode('PANNING');
+      const screenPos = getMouseScreenPos(e);
+      dragStartPos.current = screenPos;
+      viewportStartRef.current = { ...viewport };
     }
-    setInteractionMode('PANNING');
-    const screenPos = getMouseScreenPos(e);
-    dragStartPos.current = screenPos;
-    viewportStartRef.current = { ...viewport };
   };
 
   const handleMouseMove = (e) => {
@@ -1114,7 +1112,10 @@ const GraphView = ({ onNoteClick }) => {
                     const newLabel = e.target.value.trim();
                     if (newLabel && newLabel !== node.label) {
                       try {
-                        await updateNote(node.id, { title: newLabel });
+                        // Update context immediately
+                        updateNoteLocal(node.id, { title: newLabel });
+                        // Save to file in background
+                        await FileService.updateNote(node.id, { title: newLabel });
                       } catch (error) {
                         console.error('Failed to rename note:', error);
                       }
@@ -1128,7 +1129,10 @@ const GraphView = ({ onNoteClick }) => {
                       const newLabel = e.target.value.trim();
                       if (newLabel && newLabel !== node.label) {
                         try {
-                          await updateNote(node.id, { title: newLabel });
+                          // Update context immediately
+                          updateNoteLocal(node.id, { title: newLabel });
+                          // Save to file in background
+                          await FileService.updateNote(node.id, { title: newLabel });
                         } catch (error) {
                           console.error('Failed to rename note:', error);
                         }

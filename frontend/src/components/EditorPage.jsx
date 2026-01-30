@@ -18,24 +18,13 @@ import { useNotes } from '../contexts/NotesContext';
 import FileService from '../services/FileService';
 
 /**
- * ====== OBSIDIAN-STYLE FILE STORAGE ======
- * 
- * Notes are stored locally at: ~/Documents/MessyNotes/notes/{note-id}.md
- * 
- * Saving strategy:
- * - No debounce, no auto-save timers
- * - Save on blur (when you click away)
- * - Save on unmount (when switching notes)
- * - Save on window close
- * 
- * This prevents race conditions and data loss.
- * =========================================
+ * DEBUG VERSION - This will help us understand what's happening
  */
 
 export default function EditorPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { updateNote } = useNotes();
+  const { notes, updateNoteLocal, getNote } = useNotes();
   
   const [note, setNote] = useState(null);
   const [isA4, setIsA4] = useState(true);
@@ -48,9 +37,9 @@ export default function EditorPage() {
   // Refs to prevent race conditions
   const currentNoteIdRef = useRef(null);
   const isLoadingRef = useRef(false);
-  const isSavingRef = useRef(false);
   const editorUpdateRef = useRef(false);
-  const hasPendingChangesRef = useRef(false);
+  const saveTimeoutRef = useRef(null);
+  const pendingUpdatesRef = useRef({});
 
   const toggleTheme = () => {
     const newTheme = theme === 'dark' ? 'light' : 'dark';
@@ -58,6 +47,41 @@ export default function EditorPage() {
     document.documentElement.setAttribute('data-theme', newTheme);
     localStorage.setItem('theme', newTheme);
   };
+
+  // Debounced save to file system (background operation)
+  const saveToFileSystem = useCallback(async (noteId, updates) => {
+    console.log('💾 Saving to file system:', noteId, updates);
+    try {
+      await FileService.updateNote(noteId, updates);
+      console.log('✅ Saved to file system successfully');
+    } catch (error) {
+      console.error('❌ Failed to save to file system:', error);
+    }
+  }, []);
+
+  // Schedule a save (debounced)
+  const scheduleSave = useCallback((noteId, updates) => {
+    console.log('⏱️ Scheduling save for:', noteId);
+    
+    // Merge with pending updates
+    pendingUpdatesRef.current = {
+      ...pendingUpdatesRef.current,
+      ...updates
+    };
+
+    // Clear existing timeout
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    // Schedule new save (300ms debounce)
+    saveTimeoutRef.current = setTimeout(() => {
+      const toSave = { ...pendingUpdatesRef.current };
+      pendingUpdatesRef.current = {};
+      console.log('🚀 Debounce completed, saving now:', toSave);
+      saveToFileSystem(noteId, toSave);
+    }, 300);
+  }, [saveToFileSystem]);
 
   const editor = useEditor({
     extensions: [
@@ -82,70 +106,51 @@ export default function EditorPage() {
       const text = editor.getText();
       const title = text.split('\n')[0].slice(0, 50) || 'Untitled Thought';
       
-      // Update local state immediately
-      setNote(prev => ({
-        ...prev,
+      const updates = {
         title,
         content: json,
         rawText: text
-      }));
-      
-      // Mark that we have pending changes
-      hasPendingChangesRef.current = true;
-    },
-    onBlur: () => {
-      // Save when editor loses focus (Obsidian-style)
-      if (hasPendingChangesRef.current && note?.id && editor && !isSavingRef.current) {
-        saveNote();
-      }
-    }
-  }, [note?.id]);
+      };
 
-  // Save to local file system
-  const saveNote = useCallback(async () => {
-    if (isSavingRef.current || !note?.id || !editor) return;
-    if (!hasPendingChangesRef.current) return;
+      console.log('✏️ Editor updated, title:', title);
 
-    isSavingRef.current = true;
-
-    try {
-      const currentContent = editor.getJSON();
-      const currentText = editor.getText();
-      const title = currentText?.split('\n')[0].slice(0, 50) || 'Untitled Thought';
-      
-      await updateNote(note.id, {
-        content: currentContent,
-        rawText: currentText,
-        title
+      // 1. Update local state immediately
+      setNote(prev => {
+        console.log('📝 Updating local note state');
+        return {
+          ...prev,
+          ...updates
+        };
       });
 
-      hasPendingChangesRef.current = false;
-    } catch (error) {
-      console.error('Failed to save note:', error);
-    } finally {
-      isSavingRef.current = false;
+      // 2. Update context immediately (this updates sidebar instantly)
+      console.log('🌐 Calling updateNoteLocal for:', note.id);
+      updateNoteLocal(note.id, updates);
+
+      // 3. Schedule background save to file system
+      scheduleSave(note.id, updates);
     }
-  }, [note?.id, editor, updateNote]);
+  }, [note?.id, updateNoteLocal, scheduleSave]);
 
   // Load note when ID changes
   useEffect(() => {
+    console.log('🔄 ID changed to:', id, 'Current:', currentNoteIdRef.current);
+    
     if (!id || currentNoteIdRef.current === id) {
+      console.log('⏭️ Skipping load (same ID or no ID)');
       return;
     }
 
-    // Save previous note before switching
+    // Save previous note immediately before switching
     const savePreviousNote = async () => {
-      if (currentNoteIdRef.current && hasPendingChangesRef.current && editor && !isSavingRef.current) {
-        const currentContent = editor.getJSON();
-        const currentText = editor.getText();
-        const title = currentText?.split('\n')[0].slice(0, 50) || 'Untitled Thought';
-        
-        await updateNote(currentNoteIdRef.current, {
-          content: currentContent,
-          rawText: currentText,
-          title
-        });
-        hasPendingChangesRef.current = false;
+      if (currentNoteIdRef.current && saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        const toSave = { ...pendingUpdatesRef.current };
+        pendingUpdatesRef.current = {};
+        if (Object.keys(toSave).length > 0) {
+          console.log('💾 Saving previous note before switch:', currentNoteIdRef.current);
+          await saveToFileSystem(currentNoteIdRef.current, toSave);
+        }
       }
     };
 
@@ -153,67 +158,119 @@ export default function EditorPage() {
       currentNoteIdRef.current = id;
       loadNote();
     });
-  }, [id, editor, updateNote]);
+  }, [id, saveToFileSystem]);
 
   // Save on unmount
   useEffect(() => {
     return () => {
-      if (hasPendingChangesRef.current && editor && note?.id && !isSavingRef.current) {
-        const currentContent = editor.getJSON();
-        const currentText = editor.getText();
-        const title = currentText?.split('\n')[0].slice(0, 50) || 'Untitled Thought';
-        
-        // Synchronous save on unmount
-        updateNote(note.id, {
-          content: currentContent,
-          rawText: currentText,
-          title
-        }).catch(console.error);
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        const toSave = { ...pendingUpdatesRef.current };
+        if (note?.id && Object.keys(toSave).length > 0) {
+          console.log('🔚 Component unmounting, saving:', note.id);
+          saveToFileSystem(note.id, toSave);
+        }
       }
     };
-  }, [editor, note?.id, updateNote]);
-
-  // Save on window close
-  useEffect(() => {
-    const handleBeforeUnload = (e) => {
-      if (hasPendingChangesRef.current && editor && note?.id) {
-        saveNote();
-      }
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [saveNote, editor, note?.id]);
+  }, [note?.id, saveToFileSystem]);
 
   const loadNote = async () => {
+    console.log('📖 Loading note:', id);
+    
     if (id.startsWith('temp-')) {
-      console.warn('Attempted to load temporary note, redirecting...');
+      console.warn('⚠️ Attempted to load temporary note, redirecting...');
       navigate('/', { replace: true });
       return;
     }
 
-    if (isLoadingRef.current) return;
+    if (isLoadingRef.current) {
+      console.log('⏸️ Already loading, skipping...');
+      return;
+    }
     isLoadingRef.current = true;
 
     try {
+      // Check what getNote returns
+      console.log('🔍 Checking context for note:', id);
+      const cachedNote = getNote(id);
+      console.log('📦 Context returned:', cachedNote ? {
+        id: cachedNote.id,
+        title: cachedNote.title,
+        hasContent: !!cachedNote.content,
+        hasRawText: !!cachedNote.rawText,
+        rawTextPreview: cachedNote.rawText?.substring(0, 50)
+      } : 'NULL');
+
+      // Also check notes array directly
+      const noteFromArray = notes.find(n => n.id === id);
+      console.log('📋 Notes array has:', noteFromArray ? {
+        id: noteFromArray.id,
+        title: noteFromArray.title,
+        hasContent: !!noteFromArray.content,
+        hasRawText: !!noteFromArray.rawText,
+        rawTextPreview: noteFromArray.rawText?.substring(0, 50)
+      } : 'NULL');
+      
+      if (cachedNote) {
+        console.log('✅ Using cached note from context');
+        setNote(cachedNote);
+        
+        if (editor && !editor.isDestroyed) {
+          editorUpdateRef.current = true;
+          console.log('📄 Setting editor content from cache');
+          
+          if (cachedNote.content && typeof cachedNote.content === 'object') {
+            console.log('   Using content object');
+            editor.commands.setContent(cachedNote.content);
+          } else if (cachedNote.rawText) {
+            console.log('   Using rawText:', cachedNote.rawText.substring(0, 50));
+            editor.commands.setContent({
+              type: 'doc',
+              content: [{
+                type: 'paragraph',
+                content: [{ type: 'text', text: cachedNote.rawText }]
+              }]
+            });
+          } else {
+            console.log('   No content, using empty');
+            editor.commands.setContent('');
+          }
+          
+          setTimeout(() => {
+            editorUpdateRef.current = false;
+          }, 0);
+        }
+        
+        isLoadingRef.current = false;
+        return; // CRITICAL: Don't load from file!
+      }
+
+      // If not in context, load from file system
+      console.log('📂 Loading from file system:', id);
       const res = await FileService.getNote(id);
+      console.log('📄 File system returned:', {
+        id: res.id,
+        title: res.title,
+        hasContent: !!res.content,
+        hasRawText: !!res.rawText,
+        rawTextPreview: res.rawText?.substring(0, 50)
+      });
 
       // Check if we're still on the same note
       if (currentNoteIdRef.current !== id) {
+        console.log('⚠️ Note ID changed during load, aborting');
         return;
       }
 
       setNote(res);
-      hasPendingChangesRef.current = false;
       
       if (editor && !editor.isDestroyed) {
         editorUpdateRef.current = true;
+        console.log('📄 Setting editor content from file');
         
-        // Use the stored content structure if available
         if (res.content && typeof res.content === 'object') {
           editor.commands.setContent(res.content);
         } else if (res.rawText) {
-          // Fallback: create simple structure from rawText
           editor.commands.setContent({
             type: 'doc',
             content: [{
@@ -234,7 +291,7 @@ export default function EditorPage() {
         return;
       }
 
-      console.error('Failed to load note:', error);
+      console.error('❌ Failed to load note:', error);
       setTimeout(() => {
         navigate('/', { replace: true });
       }, 1000);
