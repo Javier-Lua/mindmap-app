@@ -87,12 +87,6 @@ export const NotesProvider = ({ children }) => {
         hasRawText: !!updated[index].rawText
       });
 
-      // Move to front if title changed
-      if (updates.title || updates.updatedAt) {
-        const [note] = updated.splice(index, 1);
-        updated.unshift(note);
-      }
-
       return updated;
     });
   }, []);
@@ -110,11 +104,6 @@ export const NotesProvider = ({ children }) => {
 
         const updated = [...prev];
         updated[index] = updatedNote;
-
-        if (updates.title) {
-          const [note] = updated.splice(index, 1);
-          updated.unshift(note);
-        }
 
         return updated;
       });
@@ -218,12 +207,24 @@ export const NotesProvider = ({ children }) => {
 
   const moveNoteToFolder = useCallback(async (noteId, folderId) => {
     try {
+      // When moving to a new folder, the backend will assign a new position automatically
       await updateNote(noteId, { folderId });
     } catch (error) {
       console.error('Failed to move note:', error);
       throw error;
     }
   }, [updateNote]);
+
+  const reorderNotes = useCallback(async (noteId, targetFolderId, newPosition) => {
+    try {
+      await FileService.reorderNotes(noteId, targetFolderId, newPosition);
+      // Reload notes to get updated positions
+      await loadNotes(false);
+    } catch (error) {
+      console.error('Failed to reorder notes:', error);
+      throw error;
+    }
+  }, [loadNotes]);
 
   const refresh = useCallback(async () => {
     await Promise.all([
@@ -250,6 +251,7 @@ export const NotesProvider = ({ children }) => {
     updateFolder,
     deleteFolder,
     moveNoteToFolder,
+    reorderNotes,
     refresh
   };
 

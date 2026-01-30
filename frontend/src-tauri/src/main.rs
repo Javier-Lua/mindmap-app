@@ -49,6 +49,8 @@ struct Note {
     color: String,
     #[serde(rename = "folderId", skip_serializing_if = "Option::is_none")]
     folder_id: Option<String>,
+    #[serde(default)]
+    position: i32,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -224,13 +226,37 @@ async fn get_notes(state: State<'_, AppState>) -> Result<Vec<Note>, String> {
                     folder_id: metadata.get("folderId")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string()),
+                    position: metadata.get("position")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0) as i32,
                 });
             }
         }
     }
     
-    // Sort by updated_at descending
-    notes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    // Sort by position first (ascending), then by updated_at (descending)
+    notes.sort_by(|a, b| {
+        // First compare folder_id (group by folder)
+        match (&a.folder_id, &b.folder_id) {
+            (Some(f1), Some(f2)) if f1 == f2 => {
+                // Same folder: sort by position, then by updated_at
+                match a.position.cmp(&b.position) {
+                    std::cmp::Ordering::Equal => b.updated_at.cmp(&a.updated_at),
+                    other => other,
+                }
+            },
+            (None, None) => {
+                // Both in root: sort by position, then by updated_at
+                match a.position.cmp(&b.position) {
+                    std::cmp::Ordering::Equal => b.updated_at.cmp(&a.updated_at),
+                    other => other,
+                }
+            },
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (Some(f1), Some(f2)) => f1.cmp(f2),
+        }
+    });
     
     Ok(notes)
 }
@@ -300,6 +326,9 @@ async fn get_note(id: String, state: State<'_, AppState>) -> Result<Note, String
         folder_id: metadata.get("folderId")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        position: metadata.get("position")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32,
     })
 }
 
@@ -322,6 +351,15 @@ async fn create_note(
     let title = title.unwrap_or_else(|| "Untitled Thought".to_string());
     let raw_text = raw_text.unwrap_or_default();
     
+    // Get max position in the target folder/root
+    let all_notes = get_notes(state.clone()).await?;
+    let max_position = all_notes
+        .iter()
+        .filter(|n| n.folder_id == folder_id)
+        .map(|n| n.position)
+        .max()
+        .unwrap_or(-1);
+    
     let note = Note {
         id: id.clone(),
         title: title.clone(),
@@ -335,6 +373,7 @@ async fn create_note(
         note_type: note_type.unwrap_or_else(|| "text".to_string()),
         color: color.unwrap_or_else(|| "#ffffff".to_string()),
         folder_id,
+        position: max_position + 1,
     };
     
     save_note(&note, &state)?;
@@ -352,6 +391,7 @@ async fn update_note(
     ephemeral: Option<bool>,
     archived: Option<bool>,
     folder_id: Option<Option<String>>,
+    position: Option<i32>,
     state: State<'_, AppState>,
 ) -> Result<Note, String> {
     let mut note = get_note(id.clone(), state.clone()).await?;
@@ -375,7 +415,10 @@ async fn update_note(
         note.archived = a;
     }
     if let Some(fid) = folder_id {
-        note.folder_id = fid; // fid is Option<String>
+        note.folder_id = fid;
+    }
+    if let Some(p) = position {
+        note.position = p;
     }
 
     note.updated_at = Utc::now().to_rfc3339();
@@ -383,6 +426,60 @@ async fn update_note(
     save_note(&note, &state)?;
     
     Ok(note)
+}
+
+#[tauri::command]
+async fn reorder_notes(
+    note_id: String,
+    target_folder_id: Option<String>,
+    new_position: i32,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    // Get all notes
+    let mut all_notes = get_notes(state.clone()).await?;
+    
+    // Find the note being moved
+    let note_index = all_notes.iter().position(|n| n.id == note_id)
+        .ok_or("Note not found")?;
+    
+    let mut moved_note = all_notes.remove(note_index);
+    let old_folder_id = moved_note.folder_id.clone();
+    
+    // Update folder if changed
+    moved_note.folder_id = target_folder_id.clone();
+    
+    // Filter notes in the target folder
+    let mut folder_notes: Vec<Note> = all_notes
+        .iter()
+        .filter(|n| n.folder_id == target_folder_id)
+        .cloned()
+        .collect();
+    
+    // Insert at new position
+    let insert_pos = new_position.max(0).min(folder_notes.len() as i32) as usize;
+    folder_notes.insert(insert_pos, moved_note.clone());
+    
+    // Renumber all notes in target folder
+    for (idx, note) in folder_notes.iter_mut().enumerate() {
+        note.position = idx as i32;
+        save_note(note, &state)?;
+    }
+    
+    // If folder changed, renumber old folder too
+    if old_folder_id != target_folder_id {
+        let mut old_folder_notes: Vec<Note> = all_notes
+            .iter()
+            .filter(|n| n.folder_id == old_folder_id && n.id != note_id)
+            .cloned()
+            .collect();
+        
+        for (idx, note) in old_folder_notes.iter_mut().enumerate() {
+            note.position = idx as i32;
+            save_note(note, &state)?;
+        }
+    }
+    
+    Ok(())
 }
 
 #[tauri::command]
@@ -531,6 +628,7 @@ async fn delete_folder(id: String, state: State<'_, AppState>) -> Result<(), Str
                 None,
                 None,
                 Some(None),
+                None,
                 state.clone()
             ).await?;
         }
@@ -636,6 +734,7 @@ fn save_note(note: &Note, state: &AppState) -> Result<(), String> {
         "type": note.note_type,
         "color": note.color,
         "content": note.content,
+        "position": note.position,
     });
     
     if let Some(ref folder_id) = note.folder_id {
@@ -713,6 +812,7 @@ fn main() {
             get_note,
             create_note,
             update_note,
+            reorder_notes,
             delete_note,
             delete_all_notes,
             get_folders,

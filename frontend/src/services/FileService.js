@@ -78,9 +78,23 @@ class FileService {
         ephemeral: updates.ephemeral,
         archived: updates.archived,
         folderId: updates.folderId !== undefined ? updates.folderId : null,
+        position: updates.position,
       });
     } catch (error) {
       console.error('Failed to update note:', error);
+      throw error;
+    }
+  }
+
+  async reorderNotes(noteId, targetFolderId, newPosition) {
+    try {
+      await invoke('reorder_notes', {
+        noteId,
+        targetFolderId,
+        newPosition,
+      });
+    } catch (error) {
+      console.error('Failed to reorder notes:', error);
       throw error;
     }
   }

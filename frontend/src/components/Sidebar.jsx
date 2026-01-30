@@ -10,7 +10,7 @@ import { useNotes } from '../contexts/NotesContext';
 function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { notes, folders, loadNotes, loadFolders, deleteNote, createFolder, updateFolder, deleteFolder, moveNoteToFolder, updateNote, lastSync, initialized } = useNotes();
+  const { notes, folders, loadNotes, loadFolders, deleteNote, createFolder, updateFolder, deleteFolder, moveNoteToFolder, updateNote, reorderNotes, lastSync, initialized } = useNotes();
   
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSection, setActiveSection] = useState('all');
@@ -228,8 +228,18 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     
     const { type: draggedType, id: draggedId } = draggedItem;
     
+    // Don't allow dropping on self
+    if (draggedType === targetType && draggedId === targetId) {
+      setDraggedItem(null);
+      setDragOverItem(null);
+      setDropPosition(null);
+      dragCounter.current = 0;
+      return;
+    }
+    
     // Clear drag state immediately for visual feedback
-    const wasInside = dropPosition === 'inside';
+    const currentDropPosition = dropPosition;
+    const wasInside = currentDropPosition === 'inside';
     const targetFolderId = targetType === 'folder' ? targetId : null;
     
     setDraggedItem(null);
@@ -237,12 +247,18 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     setDropPosition(null);
     dragCounter.current = 0;
     
+    let needsManualRefresh = true; // Track if we need to refresh manually
+    
     try {
       if (draggedType === 'note') {
+        const draggedNote = notes.find(n => n.id === draggedId);
+        if (!draggedNote) return;
+        
         // Dropping a note
         if (targetType === 'folder' && wasInside) {
           // Move note into folder
           await moveNoteToFolder(draggedId, targetId);
+          
           // Auto-expand the folder to show the note was added
           if (!expandedFolders.has(targetId)) {
             setExpandedFolders(prev => {
@@ -253,12 +269,39 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
             updateFolder(targetId, { expanded: true });
           }
         } else if (targetType === 'note') {
-          // Reorder notes (we'll just move to same folder as target for now)
+          // Reorder notes - drop on another note
           const targetNote = notes.find(n => n.id === targetId);
-          if (targetNote) {
-            await moveNoteToFolder(draggedId, targetNote.folderId || null);
+          if (!targetNote) return;
+          
+          const targetFolderId = targetNote.folderId || null;
+          
+          // Get all notes in the target folder, sorted by position
+          const folderNotes = notes
+            .filter(n => (n.folderId || null) === targetFolderId)
+            .sort((a, b) => (a.position || 0) - (b.position || 0));
+          
+          // Find target position
+          const targetIndex = folderNotes.findIndex(n => n.id === targetId);
+          
+          let newPosition;
+          if (currentDropPosition === 'before') {
+            // Insert before target
+            newPosition = targetIndex;
+          } else {
+            // Insert after target
+            newPosition = targetIndex + 1;
           }
-        } else if (targetType === 'folder' && (wasInside === false)) {
+          
+          // If dragged note is already in this folder, adjust for removal
+          const draggedIndex = folderNotes.findIndex(n => n.id === draggedId);
+          if (draggedIndex !== -1 && draggedIndex < newPosition) {
+            newPosition--;
+          }
+          
+          // Call reorder API (this already handles refresh)
+          await reorderNotes(draggedId, targetFolderId, newPosition);
+          needsManualRefresh = false; // reorderNotes already refreshes
+        } else if (targetType === 'folder' && !wasInside) {
           // Move note to same level as folder (root or parent)
           const targetFolder = folders.find(f => f.id === targetId);
           if (targetFolder) {
@@ -268,12 +311,30 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
       } else if (draggedType === 'folder') {
         // Dropping a folder
         if (targetType === 'folder' && wasInside) {
-          // Prevent nesting folder into itself
+          // Prevent nesting folder into itself or its descendants
           if (draggedId === targetId) {
             return;
           }
+          
+          // Check if target is a descendant of dragged folder
+          let isDescendant = false;
+          let checkFolder = folders.find(f => f.id === targetId);
+          while (checkFolder && checkFolder.parentId) {
+            if (checkFolder.parentId === draggedId) {
+              isDescendant = true;
+              break;
+            }
+            checkFolder = folders.find(f => f.id === checkFolder.parentId);
+          }
+          
+          if (isDescendant) {
+            alert('Cannot move a folder into its own subfolder');
+            return;
+          }
+          
           // Move folder inside another folder (nest it)
           await updateFolder(draggedId, { parentId: targetId });
+          
           // Auto-expand target folder
           if (!expandedFolders.has(targetId)) {
             setExpandedFolders(prev => {
@@ -283,7 +344,7 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
             });
             updateFolder(targetId, { expanded: true });
           }
-        } else if (targetType === 'folder' && (wasInside === false)) {
+        } else if (targetType === 'folder' && !wasInside) {
           // Move folder to same level as target folder
           const targetFolder = folders.find(f => f.id === targetId);
           if (targetFolder) {
@@ -301,8 +362,10 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
         }
       }
       
-      // Force refresh the list
-      await Promise.all([loadNotes(false), loadFolders()]);
+      // Force refresh the list (only if not already refreshed)
+      if (needsManualRefresh) {
+        await Promise.all([loadNotes(false), loadFolders()]);
+      }
     } catch (error) {
       console.error('Failed to move item:', error);
       alert('Failed to move item: ' + error.message);
@@ -398,9 +461,17 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
       }
     });
 
+    // Sort notes within each folder by position
+    folderMap.forEach(folder => {
+      folder.notes.sort((a, b) => (a.position || 0) - (b.position || 0));
+    });
+
     // Build tree structure
     const tree = [];
-    const rootNotes = filteredNotes.filter(n => !n.folderId).map(n => ({ ...n, type: 'note' }));
+    const rootNotes = filteredNotes
+      .filter(n => !n.folderId)
+      .map(n => ({ ...n, type: 'note' }))
+      .sort((a, b) => (a.position || 0) - (b.position || 0));
 
     filteredFolders.forEach(folder => {
       const node = folderMap.get(folder.id);
