@@ -4,3 +4,4 @@ package-lock.json
 target/
 icons/
 frontend/src-tauri/Cargo.lock
+dist/
