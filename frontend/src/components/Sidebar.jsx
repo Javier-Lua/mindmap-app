@@ -26,6 +26,9 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
   const [draggedItem, setDraggedItem] = useState(null);
   const [dragOverItem, setDragOverItem] = useState(null);
   const [dropPosition, setDropPosition] = useState(null);
+  
+  // CRITICAL: Use a ref to track if we're in the middle of a drag operation
+  const isDraggingRef = useRef(false);
 
   // Auto-expand folders on mount
   useEffect(() => {
@@ -161,6 +164,8 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
       return;
     }
     
+    isDraggingRef.current = true;
+    
     // Set drag data
     const dragData = JSON.stringify({ type: itemType, id: itemId });
     e.dataTransfer.effectAllowed = 'move';
@@ -182,20 +187,26 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
   const handleDragEnd = useCallback((e) => {
     console.log('🔴 DRAG END');
     
+    isDraggingRef.current = false;
+    
     // Reset visual feedback
     if (e.target) {
       e.target.style.opacity = '1';
     }
     
-    // Clear all drag state
-    setDraggedItem(null);
-    setDragOverItem(null);
-    setDropPosition(null);
+    // Clear all drag state after a short delay to allow drop to complete
+    setTimeout(() => {
+      setDraggedItem(null);
+      setDragOverItem(null);
+      setDropPosition(null);
+    }, 100);
   }, []);
 
   const handleDragEnter = useCallback((e, itemType, itemId) => {
     e.preventDefault();
     e.stopPropagation();
+    
+    if (!isDraggingRef.current) return;
     
     console.log('🟡 DRAG ENTER:', itemType, itemId);
     
@@ -208,10 +219,12 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
   }, [draggedItem]);
 
   const handleDragOver = useCallback((e, itemType, itemId) => {
-    e.preventDefault();
+    e.preventDefault(); // CRITICAL: Must prevent default to allow drop
     e.stopPropagation();
     
-    // CRITICAL: Must prevent default to allow drop
+    if (!isDraggingRef.current) return;
+    
+    // Set drop effect
     e.dataTransfer.dropEffect = 'move';
     
     if (!draggedItem) {
@@ -268,20 +281,8 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
   }, [draggedItem, dropPosition, dragOverItem]);
 
   const handleDragLeave = useCallback((e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    // Check if we're leaving for a child element
-    const relatedTarget = e.relatedTarget;
-    if (relatedTarget && e.currentTarget.contains(relatedTarget)) {
-      return; // Still inside, don't clear
-    }
-    
-    console.log('🟠 DRAG LEAVE');
-    
-    // Clear drag over state
-    setDragOverItem(null);
-    setDropPosition(null);
+    // Don't do anything on drag leave - let dragOver handle the state
+    // This prevents premature clearing of drag state
   }, []);
 
   const handleDrop = useCallback(async (e, targetType, targetId) => {
@@ -289,6 +290,11 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     e.stopPropagation();
     
     console.log('🟣 DROP on', targetType, targetId, 'at position', dropPosition);
+    
+    if (!isDraggingRef.current) {
+      console.warn('Drop called but not dragging');
+      return;
+    }
     
     // Get drag data
     let dragData = draggedItem;
@@ -314,17 +320,11 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     // Prevent dropping on self
     if (draggedType === targetType && draggedId === targetId) {
       console.log('Cannot drop on self');
-      setDraggedItem(null);
-      setDragOverItem(null);
-      setDropPosition(null);
       return;
     }
     
-    // Clear drag state immediately
+    // Store current drop position before clearing state
     const currentDropPosition = dropPosition;
-    setDraggedItem(null);
-    setDragOverItem(null);
-    setDropPosition(null);
     
     try {
       if (draggedType === 'note') {
@@ -467,6 +467,8 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     
     console.log('🟣 DROP ON ROOT');
     
+    if (!isDraggingRef.current) return;
+    
     // Get drag data
     let dragData = draggedItem;
     if (!dragData) {
@@ -483,11 +485,6 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     if (!dragData) return;
     
     const { type, id } = dragData;
-    
-    // Clear drag state
-    setDraggedItem(null);
-    setDragOverItem(null);
-    setDropPosition(null);
     
     try {
       console.log(`  → Moving ${type} ${id} to root`);
