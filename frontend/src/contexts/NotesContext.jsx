@@ -17,14 +17,7 @@ export const NotesProvider = ({ children }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [lastSync, setLastSync] = useState(null);
   const [initialized, setInitialized] = useState(false);
-  const notesMapRef = useRef(new Map());
   const createNoteInProgressRef = useRef(false);
-
-  useEffect(() => {
-    const map = new Map();
-    notes.forEach(note => map.set(note.id, note));
-    notesMapRef.current = map;
-  }, [notes]);
 
   // Initialize app on mount
   useEffect(() => {
@@ -59,14 +52,20 @@ export const NotesProvider = ({ children }) => {
     setFolders([]);
   }, []);
 
+  // FIXED: Return current note from state, not from a ref
   const getNote = useCallback((noteId) => {
-    return notesMapRef.current.get(noteId);
-  }, []);
+    return notes.find(n => n.id === noteId);
+  }, [notes]);
 
   const updateNoteLocal = useCallback((noteId, updates) => {
+    console.log('🔄 updateNoteLocal called for:', noteId, 'with updates:', updates);
+    
     setNotes(prev => {
       const index = prev.findIndex(n => n.id === noteId);
-      if (index === -1) return prev;
+      if (index === -1) {
+        console.warn('⚠️ Note not found in context:', noteId);
+        return prev;
+      }
 
       const updated = [...prev];
       updated[index] = {
@@ -75,6 +74,14 @@ export const NotesProvider = ({ children }) => {
         updatedAt: new Date().toISOString()
       };
 
+      console.log('✅ Note updated in context:', {
+        id: updated[index].id,
+        title: updated[index].title,
+        hasContent: !!updated[index].content,
+        hasRawText: !!updated[index].rawText
+      });
+
+      // Move to front if title changed
       if (updates.title || updates.updatedAt) {
         const [note] = updated.splice(index, 1);
         updated.unshift(note);

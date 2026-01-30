@@ -17,10 +17,6 @@ import {
 import { useNotes } from '../contexts/NotesContext';
 import FileService from '../services/FileService';
 
-/**
- * DEBUG VERSION - This will help us understand what's happening
- */
-
 export default function EditorPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -115,13 +111,10 @@ export default function EditorPage() {
       console.log('✏️ Editor updated, title:', title);
 
       // 1. Update local state immediately
-      setNote(prev => {
-        console.log('📝 Updating local note state');
-        return {
-          ...prev,
-          ...updates
-        };
-      });
+      setNote(prev => ({
+        ...prev,
+        ...updates
+      }));
 
       // 2. Update context immediately (this updates sidebar instantly)
       console.log('🌐 Calling updateNoteLocal for:', note.id);
@@ -190,7 +183,7 @@ export default function EditorPage() {
     isLoadingRef.current = true;
 
     try {
-      // Check what getNote returns
+      // FIXED: Try context first, but validate it has actual content
       console.log('🔍 Checking context for note:', id);
       const cachedNote = getNote(id);
       console.log('📦 Context returned:', cachedNote ? {
@@ -198,21 +191,19 @@ export default function EditorPage() {
         title: cachedNote.title,
         hasContent: !!cachedNote.content,
         hasRawText: !!cachedNote.rawText,
+        contentType: typeof cachedNote.content,
         rawTextPreview: cachedNote.rawText?.substring(0, 50)
       } : 'NULL');
-
-      // Also check notes array directly
-      const noteFromArray = notes.find(n => n.id === id);
-      console.log('📋 Notes array has:', noteFromArray ? {
-        id: noteFromArray.id,
-        title: noteFromArray.title,
-        hasContent: !!noteFromArray.content,
-        hasRawText: !!noteFromArray.rawText,
-        rawTextPreview: noteFromArray.rawText?.substring(0, 50)
-      } : 'NULL');
       
-      if (cachedNote) {
-        console.log('✅ Using cached note from context');
+      // CRITICAL: Only use cached note if it has actual content OR is confirmed empty
+      const hasActualContent = cachedNote && (
+        (cachedNote.content && typeof cachedNote.content === 'object') ||
+        (cachedNote.rawText && cachedNote.rawText.length > 0) ||
+        cachedNote.updatedAt // If it's been updated, trust it
+      );
+
+      if (hasActualContent) {
+        console.log('✅ Using cached note from context (has content)');
         setNote(cachedNote);
         
         if (editor && !editor.isDestroyed) {
@@ -242,10 +233,10 @@ export default function EditorPage() {
         }
         
         isLoadingRef.current = false;
-        return; // CRITICAL: Don't load from file!
+        return;
       }
 
-      // If not in context, load from file system
+      // Load from file system if not in context or no content
       console.log('📂 Loading from file system:', id);
       const res = await FileService.getNote(id);
       console.log('📄 File system returned:', {
