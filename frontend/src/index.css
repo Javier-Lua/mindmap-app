@@ -402,3 +402,11 @@ textarea::-webkit-scrollbar-thumb {
   background-image: radial-gradient(#333 1px, transparent 1px);
   background-size: 20px 20px;
 }
+
+/* ===== Underline Styles ===== */
+.prose u,
+.ProseMirror u {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}

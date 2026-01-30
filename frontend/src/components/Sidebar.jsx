@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   FileText, Home, Network, Search, Plus, Folder, 
-  ChevronRight, ChevronDown, LayoutGrid, Zap, RefreshCw, Loader, Trash2, Edit3,
+  ChevronRight, ChevronDown, LayoutGrid, RefreshCw, Loader, Trash2, Edit3,
   Star, Clock, FolderPlus, MoreHorizontal, FolderOpen
 } from 'lucide-react';
 import { useNotes } from '../contexts/NotesContext';
@@ -10,7 +10,7 @@ import { useNotes } from '../contexts/NotesContext';
 function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { notes, folders, loadNotes, loadFolders, deleteNote, createFolder, updateFolder, deleteFolder, moveNoteToFolder, lastSync, initialized } = useNotes();
+  const { notes, folders, loadNotes, loadFolders, deleteNote, createFolder, updateFolder, deleteFolder, moveNoteToFolder, updateNote, lastSync, initialized } = useNotes();
   
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSection, setActiveSection] = useState('all');
@@ -70,8 +70,19 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     }
   };
 
+  const handleTogglePin = async (noteId, currentlyPinned, e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    
+    try {
+      await updateNote(noteId, { sticky: !currentlyPinned });
+    } catch (error) {
+      console.error('Failed to toggle pin:', error);
+    }
+  };
+
   const handleNoteClick = (noteId, e) => {
-    if (e.target.closest('.delete-button')) {
+    if (e.target.closest('.delete-button') || e.target.closest('.pin-button')) {
       return;
     }
     
@@ -82,7 +93,12 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     onSelectNote(noteId);
   };
 
-  const toggleFolder = (folderId) => {
+  const toggleFolder = (folderId, e) => {
+    // Stop propagation to prevent folder menu from triggering
+    if (e) {
+      e.stopPropagation();
+    }
+    
     setExpandedFolders(prev => {
       const next = new Set(prev);
       if (next.has(folderId)) {
@@ -180,10 +196,8 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     switch (activeSection) {
       case 'sticky':
         return filteredNotes.filter(n => n.sticky);
-      case 'ephemeral':
-        return filteredNotes.filter(n => n.ephemeral);
       case 'recent':
-        return filteredNotes.slice(0, 10);
+        return filteredNotes.slice(0, 20);
       case 'all':
       default:
         return filteredNotes;
@@ -191,9 +205,8 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
   };
 
   const displayNotes = getNotesForSection();
-  const rootNotes = displayNotes.filter(n => !n.folderId);
 
-  const buildFolderTree = () => {
+  const buildFolderTree = (notesToUse) => {
     const tree = [];
     const folderMap = new Map();
     
@@ -202,7 +215,7 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
       folderMap.set(folder.id, {
         ...folder,
         children: [],
-        notes: displayNotes.filter(n => n.folderId === folder.id)
+        notes: notesToUse.filter(n => n.folderId === folder.id)
       });
     });
     
@@ -219,10 +232,12 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     return tree;
   };
 
-  const folderTree = buildFolderTree();
+  const folderTree = buildFolderTree(displayNotes);
+  const rootNotes = displayNotes.filter(n => !n.folderId);
 
   const renderNote = (note) => {
     const isSelected = currentNoteId === note.id;
+    const isPinned = note.sticky;
     
     return (
       <div
@@ -236,15 +251,20 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
             : 'theme-bg-hover text-theme-secondary'
         }`}
       >
-        <FileText size={12} className={note.sticky ? 'text-yellow-400' : 'text-theme-tertiary'} />
+        <FileText size={12} className={isPinned ? 'text-yellow-400' : 'text-theme-tertiary'} />
         <div className="flex-1 min-w-0">
           <div className="truncate">{note.title}</div>
           <div className="text-[10px] text-theme-tertiary">
             {new Date(note.updatedAt).toLocaleDateString()}
           </div>
         </div>
-        {note.sticky && <Star size={10} className="text-yellow-400" fill="currentColor" />}
-        {note.ephemeral && <Zap size={10} className="text-theme-tertiary" />}
+        <button
+          onClick={(e) => handleTogglePin(note.id, isPinned, e)}
+          className="pin-button opacity-0 group-hover:opacity-100 p-0.5 hover:bg-yellow-600 rounded transition-opacity cursor-pointer"
+          title={isPinned ? "Unpin" : "Pin"}
+        >
+          <Star size={10} className={isPinned ? 'text-yellow-400' : 'text-gray-400'} fill={isPinned ? 'currentColor' : 'none'} />
+        </button>
         <div
           onClick={(e) => handleDeleteNote(note.id, e)}
           className="delete-button opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-600 rounded transition-opacity cursor-pointer"
@@ -270,17 +290,27 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
           onDragOver={handleDragOver}
           onDrop={(e) => handleDropOnFolder(e, folder.id)}
         >
-          <div className="w-full flex items-center gap-1 px-2 py-1.5 rounded text-xs theme-bg-hover transition-colors">
-            <button
-              onClick={() => toggleFolder(folder.id)}
+          <div 
+            className="w-full flex items-center gap-1 px-2 py-1.5 rounded text-xs theme-bg-hover transition-colors cursor-pointer"
+            onClick={(e) => {
+              if (!isEditing && !showMenu) {
+                toggleFolder(folder.id, e);
+              }
+            }}
+          >
+            <div 
               className="p-0.5 hover:bg-white/10 rounded"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleFolder(folder.id, e);
+              }}
             >
               {isExpanded ? (
                 <ChevronDown size={12} className="text-theme-tertiary" />
               ) : (
                 <ChevronRight size={12} className="text-theme-tertiary" />
               )}
-            </button>
+            </div>
             
             {isExpanded ? (
               <FolderOpen size={12} className="text-blue-400" />
@@ -329,7 +359,8 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
               {showMenu && (
                 <div className="absolute right-0 mt-1 bg-theme-card border border-theme-primary rounded shadow-lg z-50 py-1 min-w-[120px]">
                   <button
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setEditingFolderId(folder.id);
                       setEditingFolderName(folder.name);
                       setFolderMenuId(null);
@@ -340,7 +371,10 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
                     Rename
                   </button>
                   <button
-                    onClick={() => handleDeleteFolder(folder.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteFolder(folder.id);
+                    }}
                     className="w-full px-3 py-1.5 text-left text-xs hover:bg-red-600 text-red-400 flex items-center gap-2"
                   >
                     <Trash2 size={12} />
@@ -437,7 +471,7 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
           >
             <FileText size={14} />
             <span>All Notes</span>
-            <span className="ml-auto text-[10px] text-theme-tertiary">{displayNotes.length}</span>
+            <span className="ml-auto text-[10px] text-theme-tertiary">{notes.length}</span>
           </button>
           
           <button
@@ -458,16 +492,7 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
           >
             <Star size={14} className="text-yellow-400" />
             <span>Pinned</span>
-          </button>
-          
-          <button
-            onClick={() => setActiveSection('ephemeral')}
-            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors ${
-              activeSection === 'ephemeral' ? 'bg-theme-tertiary text-theme-primary' : 'theme-bg-hover text-theme-secondary'
-            }`}
-          >
-            <Zap size={14} className="text-gray-400" />
-            <span>Quick Notes</span>
+            <span className="ml-auto text-[10px] text-theme-tertiary">{notes.filter(n => n.sticky).length}</span>
           </button>
         </div>
 
@@ -475,7 +500,7 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
         <div className="px-2 pb-4">
           <div className="flex items-center justify-between px-2 py-2">
             <div className="text-[10px] uppercase tracking-wider text-theme-tertiary">
-              Folders & Notes
+              {activeSection === 'all' ? 'All Notes' : activeSection === 'recent' ? 'Recent Notes' : 'Pinned Notes'}
             </div>
             <button
               onClick={() => setShowNewFolderInput(true)}

@@ -3,13 +3,14 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Highlight from '@tiptap/extension-highlight';
 import Placeholder from '@tiptap/extension-placeholder';
+import Underline from '@tiptap/extension-underline';
 import { Color } from '@tiptap/extension-color';
 import { FontFamily } from '@tiptap/extension-font-family';
 import { TextStyle } from '@tiptap/extension-text-style';
 import { Typography } from '@tiptap/extension-typography';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
-  Moon, Sun, Bold, Italic,
+  Moon, Sun, Bold, Italic, Underline as UnderlineIcon,
   Highlighter,
   List, ListOrdered, Code, Quote, Undo, Redo,
   Layout
@@ -28,7 +29,7 @@ export default function EditorPage() {
     return document.documentElement.getAttribute('data-theme') || 'dark';
   });
   const [fontSize, setFontSize] = useState(16);
-  const [fontFamily, setFontFamily] = useState('Inter');
+  const [fontFamily, setFontFamily] = useState('Arial');
   const [isLoading, setIsLoading] = useState(true);
   
   // Use refs to prevent race conditions
@@ -98,6 +99,7 @@ export default function EditorPage() {
   const editor = useEditor({
     extensions: [
       StarterKit,
+      Underline,
       Highlight.configure({ multicolor: true }),
       Placeholder.configure({ placeholder: 'Start your messy thinking...' }),
       Color,
@@ -291,10 +293,10 @@ export default function EditorPage() {
           }}
           className="input-themed text-sm rounded px-2 py-1"
         >
+          <option value="Arial">Arial</option>
           <option value="Inter">Inter</option>
           <option value="Georgia">Georgia</option>
           <option value="Times New Roman">Times New Roman</option>
-          <option value="Arial">Arial</option>
           <option value="Courier New">Courier New</option>
           <option value="Verdana">Verdana</option>
           <option value="Comic Sans MS">Comic Sans</option>
@@ -330,6 +332,13 @@ export default function EditorPage() {
           title="Italic"
         >
           <Italic size={16} />
+        </button>
+        <button
+          onClick={() => editor?.chain().focus().toggleUnderline().run()}
+          className={`p-2 theme-bg-hover rounded transition-colors text-theme-secondary ${editor?.isActive('underline') ? 'bg-theme-tertiary' : ''}`}
+          title="Underline"
+        >
+          <UnderlineIcon size={16} />
         </button>
         <button
           onClick={() => editor?.chain().focus().toggleHighlight().run()}
