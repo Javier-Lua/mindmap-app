@@ -27,9 +27,8 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
   const [dragOverItem, setDragOverItem] = useState(null);
   const [dropPosition, setDropPosition] = useState(null);
   
-  // CRITICAL: Use a ref to track if we're in the middle of a drag operation
   const isDraggingRef = useRef(false);
-  const dragDataRef = useRef(null); // Store drag data persistently
+  const dragDataRef = useRef(null);
 
   // Auto-expand folders on mount
   useEffect(() => {
@@ -90,7 +89,6 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
   };
 
   const handleNoteClick = (noteId, e) => {
-    // Don't handle click if we just finished dragging
     if (isDraggingRef.current) {
       e.preventDefault();
       e.stopPropagation();
@@ -166,7 +164,6 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
   const handleDragStart = useCallback((e, itemType, itemId) => {
     console.log('🟢 DRAG START:', itemType, itemId);
     
-    // Prevent dragging while editing
     if (editingFolderId || folderMenuId) {
       e.preventDefault();
       return;
@@ -174,18 +171,14 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     
     isDraggingRef.current = true;
     
-    // Set drag data
     const dragData = { type: itemType, id: itemId };
-    dragDataRef.current = dragData; // Store persistently
+    dragDataRef.current = dragData;
     
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('application/json', JSON.stringify(dragData));
-    e.dataTransfer.setData('text/plain', JSON.stringify(dragData)); // Fallback
     
-    // Update state
     setDraggedItem(dragData);
     
-    // Add visual feedback
     setTimeout(() => {
       const element = e.currentTarget;
       if (element) {
@@ -197,68 +190,47 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
   const handleDragEnd = useCallback((e) => {
     console.log('🔴 DRAG END');
     
-    // Reset visual feedback immediately
     if (e.currentTarget) {
       e.currentTarget.style.opacity = '1';
     }
     
-    // CRITICAL: Delay clearing state to allow drop event to fire
     setTimeout(() => {
       isDraggingRef.current = false;
       dragDataRef.current = null;
       setDraggedItem(null);
       setDragOverItem(null);
       setDropPosition(null);
-    }, 250); // Increased delay
+    }, 250);
   }, []);
 
   const handleDragEnter = useCallback((e, itemType, itemId) => {
-    // CRITICAL: MUST prevent default FIRST to allow drop
     e.preventDefault();
-    e.stopPropagation();
-    
-    console.log('🟡 DRAG ENTER:', itemType, itemId);
-    
-    // CRITICAL: Set drop effect immediately - browser needs this
     e.dataTransfer.dropEffect = 'move';
     
     if (!isDraggingRef.current) return;
     
-    // Don't highlight self but still allow the drop
     const dragData = dragDataRef.current || draggedItem;
     if (dragData && dragData.type === itemType && dragData.id === itemId) {
-      return; // Still allowed because we called preventDefault
+      return;
     }
     
     setDragOverItem({ type: itemType, id: itemId });
   }, [draggedItem]);
 
   const handleDragOver = useCallback((e, itemType, itemId) => {
-    // CRITICAL: Must prevent default to allow drop - do this FIRST before anything else
     e.preventDefault();
-    e.stopPropagation();
-    
-    // CRITICAL: Set drop effect - browser needs this
     e.dataTransfer.dropEffect = 'move';
-    
-    // Log occasionally (not every frame)
-    if (Math.random() < 0.01) {
-      console.log('⚡ DRAG OVER:', itemType, itemId, 'dropEffect:', e.dataTransfer.dropEffect);
-    }
     
     const dragData = dragDataRef.current || draggedItem;
     
-    // CRITICAL: Always allow the drop by preventing default, even if we don't process it
     if (!dragData) {
-      return; // Still allowed because we called preventDefault
+      return;
     }
     
-    // Don't process self but still allow drop
     if (dragData.type === itemType && dragData.id === itemId) {
-      return; // Still allowed because we called preventDefault
+      return;
     }
     
-    // Calculate drop position based on mouse Y
     const rect = e.currentTarget.getBoundingClientRect();
     const mouseY = e.clientY - rect.top;
     const itemHeight = rect.height;
@@ -266,7 +238,6 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     let newPosition;
     
     if (itemType === 'folder') {
-      // Folders: 30% top = before, 30% bottom = after, 40% middle = inside
       const topThreshold = itemHeight * 0.3;
       const bottomThreshold = itemHeight * 0.7;
       
@@ -278,11 +249,9 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
         newPosition = 'inside';
       }
     } else {
-      // Notes: 50/50 split for before/after
       newPosition = mouseY < itemHeight / 2 ? 'before' : 'after';
     }
     
-    // Only update if changed
     if (newPosition !== dropPosition || 
         !dragOverItem || 
         dragOverItem.type !== itemType || 
@@ -294,20 +263,14 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
 
   const handleDrop = useCallback(async (e, targetType, targetId) => {
     e.preventDefault();
-    e.stopPropagation();
     
-    console.log('🟣 DROP CALLED! on', targetType, targetId);
-    console.log('   isDraggingRef.current:', isDraggingRef.current);
-    console.log('   dropPosition:', dropPosition);
-    console.log('   dragDataRef.current:', dragDataRef.current);
-    console.log('   draggedItem:', draggedItem);
+    console.log('🟣🟣🟣 DROP CALLED! on', targetType, targetId);
     
-    // Get drag data from ref (most reliable source)
     let dragData = dragDataRef.current || draggedItem;
     
     if (!dragData) {
       try {
-        const dataStr = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain');
+        const dataStr = e.dataTransfer.getData('application/json');
         if (dataStr) {
           dragData = JSON.parse(dataStr);
         }
@@ -323,13 +286,11 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     
     const { type: draggedType, id: draggedId } = dragData;
     
-    // Prevent dropping on self
     if (draggedType === targetType && draggedId === targetId) {
       console.log('Cannot drop on self');
       return;
     }
     
-    // Store current drop position before any async operations
     const currentDropPosition = dropPosition;
     
     try {
@@ -337,11 +298,9 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
         console.log('📝 Dropping NOTE');
         
         if (targetType === 'folder' && currentDropPosition === 'inside') {
-          // Move note INTO folder
           console.log(`  → Moving note ${draggedId} INTO folder ${targetId}`);
           await moveNoteToFolder(draggedId, targetId);
           
-          // Auto-expand folder
           setExpandedFolders(prev => {
             const next = new Set(prev);
             next.add(targetId);
@@ -350,7 +309,6 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
           updateFolder(targetId, { expanded: true });
         } 
         else if (targetType === 'note') {
-          // Reorder note relative to target note
           const targetNote = notes.find(n => n.id === targetId);
           if (!targetNote) {
             console.error('Target note not found');
@@ -359,12 +317,10 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
           
           const targetFolderId = targetNote.folderId || null;
           
-          // Get all notes in target folder, sorted by position
           const folderNotes = notes
             .filter(n => (n.folderId || null) === targetFolderId)
             .sort((a, b) => (a.position || 0) - (b.position || 0));
           
-          // Find target index
           const targetIndex = folderNotes.findIndex(n => n.id === targetId);
           if (targetIndex === -1) {
             console.error('Target not found in folder notes');
@@ -378,7 +334,6 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
             newPosition = targetIndex + 1;
           }
           
-          // Adjust if moving within same folder
           const draggedIndex = folderNotes.findIndex(n => n.id === draggedId);
           if (draggedIndex !== -1 && draggedIndex < newPosition) {
             newPosition--;
@@ -388,7 +343,6 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
           await reorderNotes(draggedId, targetFolderId, newPosition);
         }
         else if (targetType === 'folder') {
-          // Drop BEFORE/AFTER folder (move to same level)
           const targetFolder = folders.find(f => f.id === targetId);
           if (targetFolder) {
             console.log(`  → Moving note ${draggedId} to same level as folder ${targetId}`);
@@ -400,13 +354,11 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
         console.log('📁 Dropping FOLDER');
         
         if (targetType === 'folder' && currentDropPosition === 'inside') {
-          // Prevent circular nesting
           if (draggedId === targetId) {
             alert('Cannot move a folder into itself');
             return;
           }
           
-          // Check if target is descendant of dragged
           let isDescendant = false;
           let checkFolder = folders.find(f => f.id === targetId);
           while (checkFolder && checkFolder.parentId) {
@@ -422,11 +374,9 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
             return;
           }
           
-          // Move folder inside target
           console.log(`  → Moving folder ${draggedId} INTO folder ${targetId}`);
           await updateFolder(draggedId, { parentId: targetId });
           
-          // Auto-expand target
           setExpandedFolders(prev => {
             const next = new Set(prev);
             next.add(targetId);
@@ -435,7 +385,6 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
           updateFolder(targetId, { expanded: true });
         }
         else if (targetType === 'folder') {
-          // Move to same level as target folder
           const targetFolder = folders.find(f => f.id === targetId);
           if (targetFolder) {
             console.log(`  → Moving folder ${draggedId} to same level as folder ${targetId}`);
@@ -443,7 +392,6 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
           }
         }
         else if (targetType === 'note') {
-          // Move to same level as note
           const targetNote = notes.find(n => n.id === targetId);
           if (targetNote && targetNote.folderId) {
             const noteFolder = folders.find(f => f.id === targetNote.folderId);
@@ -456,7 +404,6 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
         }
       }
       
-      // Force refresh to show new order
       console.log('  ✅ Drop complete, refreshing...');
       await Promise.all([loadNotes(false), loadFolders()]);
       
@@ -469,16 +416,14 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
 
   const handleDropOnRoot = useCallback(async (e) => {
     e.preventDefault();
-    e.stopPropagation();
     
     console.log('🟣 DROP ON ROOT');
     
-    // Get drag data from ref
     const dragData = dragDataRef.current || draggedItem;
     
     if (!dragData) {
       try {
-        const dataStr = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain');
+        const dataStr = e.dataTransfer.getData('application/json');
         if (dataStr) {
           const parsed = JSON.parse(dataStr);
           dragDataRef.current = parsed;
@@ -633,79 +578,70 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
       <div
         key={note.id}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
-        className="relative"
+        draggable={true}
+        onDragStart={(e) => {
+          handleDragStart(e, 'note', note.id);
+        }}
+        onDragEnd={(e) => {
+          handleDragEnd(e);
+        }}
+        onDragEnter={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          handleDragEnter(e, 'note', note.id);
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          handleDragOver(e, 'note', note.id);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          console.log('🟣🟣🟣 DROP EVENT FIRED on note:', note.id);
+          handleDrop(e, 'note', note.id);
+        }}
+        onMouseUp={(e) => {
+          // Only handle click if we didn't drag
+          if (!isDraggingRef.current && !e.target.closest('.pin-button') && !e.target.closest('.delete-button')) {
+            handleNoteClick(note.id, e);
+          }
+        }}
+        className={`relative w-full flex items-center gap-2 px-2 py-2 rounded text-xs text-left transition-all duration-200 group cursor-pointer select-none ${
+          isSelected 
+            ? 'bg-theme-tertiary text-theme-primary ring-2 ring-purple-500 ring-opacity-30' 
+            : 'theme-bg-hover text-theme-secondary'
+        } ${isDragging ? 'opacity-40' : ''} ${dropIndicatorClass}`}
       >
-        {/* Outer drop zone - ensures drop events are always captured */}
-        <div
-          onDragEnter={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            handleDragEnter(e, 'note', note.id);
-          }}
-          onDragOver={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            handleDragOver(e, 'note', note.id);
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            console.log('🟣🟣🟣 DROP EVENT FIRED on note:', note.id);
-            handleDrop(e, 'note', note.id);
-          }}
-          className="w-full"
-        >
-          {/* Inner draggable element */}
-          <div
-            draggable={true}
-            onDragStart={(e) => {
-              e.stopPropagation();
-              handleDragStart(e, 'note', note.id);
-            }}
-            onDragEnd={(e) => {
-              e.stopPropagation();
-              handleDragEnd(e);
-            }}
-            onClick={(e) => {
-              if (!isDraggingRef.current) {
-                handleNoteClick(note.id, e);
-              }
-            }}
-            className={`w-full flex items-center gap-2 px-2 py-2 rounded text-xs text-left transition-all duration-200 group cursor-pointer select-none ${
-              isSelected 
-                ? 'bg-theme-tertiary text-theme-primary ring-2 ring-purple-500 ring-opacity-30' 
-                : 'theme-bg-hover text-theme-secondary'
-            } ${isDragging ? 'opacity-40' : ''} ${dropIndicatorClass}`}
-          >
-            <FileText size={12} className={`pointer-events-none ${isPinned ? 'text-yellow-400' : 'text-theme-tertiary'}`} />
-            <div className="flex-1 min-w-0 pointer-events-none">
-              <div className="truncate">{note.title}</div>
-              <div className="text-[10px] text-theme-tertiary">
-                {new Date(note.updatedAt).toLocaleDateString()}
-              </div>
-            </div>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleTogglePin(note.id, isPinned, e);
-              }}
-              className="pin-button opacity-0 group-hover:opacity-100 p-0.5 hover:bg-yellow-600 rounded transition-opacity cursor-pointer z-10 pointer-events-auto"
-              title={isPinned ? "Unpin" : "Pin"}
-            >
-              <Star size={10} className={isPinned ? 'text-yellow-400' : 'text-gray-400'} fill={isPinned ? 'currentColor' : 'none'} />
-            </button>
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDeleteNote(note.id, e);
-              }}
-              className="delete-button opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-600 rounded transition-opacity cursor-pointer z-10 pointer-events-auto"
-              title="Delete"
-            >
-              <Trash2 size={10} className="text-red-400" />
-            </div>
+        <FileText size={12} className={`pointer-events-none ${isPinned ? 'text-yellow-400' : 'text-theme-tertiary'}`} />
+        <div className="flex-1 min-w-0 pointer-events-none">
+          <div className="truncate">{note.title}</div>
+          <div className="text-[10px] text-theme-tertiary">
+            {new Date(note.updatedAt).toLocaleDateString()}
           </div>
         </div>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            handleTogglePin(note.id, isPinned, e);
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          className="pin-button opacity-0 group-hover:opacity-100 p-0.5 hover:bg-yellow-600 rounded transition-opacity cursor-pointer z-10"
+          title={isPinned ? "Unpin" : "Pin"}
+        >
+          <Star size={10} className={isPinned ? 'text-yellow-400' : 'text-gray-400'} fill={isPinned ? 'currentColor' : 'none'} />
+        </button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            handleDeleteNote(note.id, e);
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          className="delete-button opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-600 rounded transition-opacity cursor-pointer z-10"
+          title="Delete"
+        >
+          <Trash2 size={10} className="text-red-400" />
+        </button>
       </div>
     );
   };
@@ -728,14 +664,19 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
       } else if (dropPosition === 'after') {
         dropIndicatorClass = 'border-b-2 border-b-blue-500';
       } else if (dropPosition === 'inside') {
-        containerClass = 'bg-blue-500 bg-opacity-20 ring-2 ring-blue-400 ring-opacity-50 rounded';
+        containerClass = 'bg-blue-500 bg-opacity-20 ring-2 ring-blue-400 ring-opacity-50';
       }
     }
     
     return (
-      <div key={folder.id} style={{ paddingLeft: `${depth * 12}px` }}>
-        {/* Outer drop zone - ensures drop events are always captured */}
+      <div key={folder.id}>
         <div
+          style={{ paddingLeft: `${depth * 12}px` }}
+          draggable={!isEditing && !showMenu}
+          onDragStart={(e) => {
+            handleDragStart(e, 'folder', folder.id);
+          }}
+          onDragEnd={handleDragEnd}
           onDragEnter={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -752,137 +693,128 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
             console.log('🟣🟣🟣 DROP EVENT FIRED on folder:', folder.id);
             handleDrop(e, 'folder', folder.id);
           }}
-          className={`relative group transition-all duration-200 ${containerClass}`}
+          onMouseUp={(e) => {
+            if (!isDraggingRef.current && !isEditing && !showMenu && !e.target.closest('.folder-menu-button')) {
+              toggleFolder(folder.id, e);
+            }
+          }}
+          className={`relative w-full flex items-center gap-1 px-2 py-2 rounded text-xs theme-bg-hover transition-all duration-200 cursor-pointer select-none group ${
+            isDragging ? 'opacity-40' : ''
+          } ${dropIndicatorClass} ${containerClass}`}
         >
-          {/* Inner draggable element */}
-          <div
-            draggable={!isEditing && !showMenu}
-            onDragStart={(e) => handleDragStart(e, 'folder', folder.id)}
-            onDragEnd={handleDragEnd}
-            className={`w-full flex items-center gap-1 px-2 py-2 rounded text-xs theme-bg-hover transition-all duration-200 cursor-pointer select-none ${
-              isDragging ? 'opacity-40' : ''
-            } ${dropIndicatorClass}`}
-            onClick={(e) => {
-              if (!isEditing && !showMenu) {
-                toggleFolder(folder.id, e);
-              }
-            }}
+          <div 
+            className="p-0.5 hover:bg-white/10 rounded transition-transform duration-200 pointer-events-none"
           >
-            <div 
-              className="p-0.5 hover:bg-white/10 rounded transition-transform duration-200 pointer-events-auto"
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleFolder(folder.id, e);
-              }}
-            >
-              {showAsExpanded ? (
-                <ChevronDown size={12} className="text-theme-tertiary transition-all duration-200" />
-              ) : (
-                <ChevronRight size={12} className="text-theme-tertiary transition-all duration-200" />
-              )}
-            </div>
-            
-            <div className="transition-all duration-200 pointer-events-none">
-              {showAsExpanded ? (
-                <FolderOpen 
-                  size={12} 
-                  className={`text-blue-400 transition-all duration-200 ${
-                    isDragOver && dropPosition === 'inside' ? 'scale-110' : ''
-                  }`} 
-                />
-              ) : (
-                <Folder 
-                  size={12} 
-                  className={`text-blue-400 transition-all duration-200 ${
-                    isDragOver && dropPosition === 'inside' ? 'scale-110' : ''
-                  }`} 
-                />
-              )}
-            </div>
-            
-            {isEditing ? (
-              <input
-                autoFocus
-                type="text"
-                value={editingFolderName}
-                onChange={(e) => setEditingFolderName(e.target.value)}
-                onBlur={() => handleRenameFolder(folder.id)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleRenameFolder(folder.id);
-                  if (e.key === 'Escape') {
-                    setEditingFolderId(null);
-                    setEditingFolderName('');
-                  }
-                }}
-                className="flex-1 px-1 py-0.5 bg-black/20 border border-blue-500 rounded text-theme-primary outline-none pointer-events-auto"
-                onClick={(e) => e.stopPropagation()}
+            {showAsExpanded ? (
+              <ChevronDown size={12} className="text-theme-tertiary transition-all duration-200" />
+            ) : (
+              <ChevronRight size={12} className="text-theme-tertiary transition-all duration-200" />
+            )}
+          </div>
+          
+          <div className="transition-all duration-200 pointer-events-none">
+            {showAsExpanded ? (
+              <FolderOpen 
+                size={12} 
+                className={`text-blue-400 transition-all duration-200 ${
+                  isDragOver && dropPosition === 'inside' ? 'scale-110' : ''
+                }`} 
               />
             ) : (
-              <span className="flex-1 truncate text-theme-primary font-medium pointer-events-none">
-                {folder.name}
-              </span>
+              <Folder 
+                size={12} 
+                className={`text-blue-400 transition-all duration-200 ${
+                  isDragOver && dropPosition === 'inside' ? 'scale-110' : ''
+                }`} 
+              />
             )}
-            
-            <span className="text-[10px] text-theme-tertiary pointer-events-none">
-              {folder.notes.length}
+          </div>
+          
+          {isEditing ? (
+            <input
+              autoFocus
+              type="text"
+              value={editingFolderName}
+              onChange={(e) => setEditingFolderName(e.target.value)}
+              onBlur={() => handleRenameFolder(folder.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleRenameFolder(folder.id);
+                if (e.key === 'Escape') {
+                  setEditingFolderId(null);
+                  setEditingFolderName('');
+                }
+              }}
+              className="flex-1 px-1 py-0.5 bg-black/20 border border-blue-500 rounded text-theme-primary outline-none"
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onMouseUp={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <span className="flex-1 truncate text-theme-primary font-medium pointer-events-none">
+              {folder.name}
             </span>
+          )}
+          
+          <span className="text-[10px] text-theme-tertiary pointer-events-none">
+            {folder.notes.length}
+          </span>
+          
+          <div className="relative">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setFolderMenuId(showMenu ? null : folder.id);
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              className="folder-menu-button opacity-0 group-hover:opacity-100 p-0.5 hover:bg-white/10 rounded transition-opacity"
+            >
+              <MoreHorizontal size={12} className="text-theme-tertiary" />
+            </button>
             
-            <div className="relative">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setFolderMenuId(showMenu ? null : folder.id);
-                }}
-                className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-white/10 rounded transition-opacity pointer-events-auto"
-              >
-                <MoreHorizontal size={12} className="text-theme-tertiary" />
-              </button>
-              
-              {showMenu && (
-                <div className="absolute right-0 mt-1 bg-theme-card border border-theme-primary rounded shadow-lg z-50 py-1 min-w-[120px]">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditingFolderId(folder.id);
-                      setEditingFolderName(folder.name);
-                      setFolderMenuId(null);
-                    }}
-                    className="w-full px-3 py-1.5 text-left text-xs hover:bg-theme-tertiary text-theme-primary flex items-center gap-2"
-                  >
-                    <Edit3 size={12} />
-                    Rename
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteFolder(folder.id);
-                    }}
-                    className="w-full px-3 py-1.5 text-left text-xs hover:bg-red-600 text-red-400 flex items-center gap-2"
-                  >
-                    <Trash2 size={12} />
-                    Delete
-                  </button>
-                </div>
-              )}
-            </div>
+            {showMenu && (
+              <div className="absolute right-0 mt-1 bg-theme-card border border-theme-primary rounded shadow-lg z-50 py-1 min-w-[120px]">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditingFolderId(folder.id);
+                    setEditingFolderName(folder.name);
+                    setFolderMenuId(null);
+                  }}
+                  className="w-full px-3 py-1.5 text-left text-xs hover:bg-theme-tertiary text-theme-primary flex items-center gap-2"
+                >
+                  <Edit3 size={12} />
+                  Rename
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteFolder(folder.id);
+                  }}
+                  className="w-full px-3 py-1.5 text-left text-xs hover:bg-red-600 text-red-400 flex items-center gap-2"
+                >
+                  <Trash2 size={12} />
+                  Delete
+                </button>
+              </div>
+            )}
           </div>
         </div>
         
         {showAsExpanded && (
-          <div className={`ml-2 transition-all duration-200 ${
+          <div className={`transition-all duration-200 ${
             isDragOver && dropPosition === 'inside' && !isExpanded ? 'opacity-60' : ''
           }`}>
             {folder.notes.map(note => renderNote(note, depth + 1))}
             {folder.children.map(child => renderFolder(child, depth + 1))}
             
             {isDragOver && dropPosition === 'inside' && !isExpanded && draggedItem && (
-              <div className="px-2 py-1 text-[10px] text-blue-400 italic animate-pulse">
+              <div className="px-2 py-1 text-[10px] text-blue-400 italic animate-pulse" style={{ paddingLeft: `${(depth + 1) * 12}px` }}>
                 Drop {draggedItem.type} here
               </div>
             )}
             
             {folder.notes.length === 0 && folder.children.length === 0 && isExpanded && (
-              <div className="px-2 py-1 text-[10px] text-theme-tertiary italic">
+              <div className="px-2 py-1 text-[10px] text-theme-tertiary italic" style={{ paddingLeft: `${(depth + 1) * 12}px` }}>
                 Empty folder
               </div>
             )}
@@ -1011,7 +943,6 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
           className="px-2 pb-4 min-h-[200px]"
           onDragOver={(e) => {
             e.preventDefault();
-            e.stopPropagation();
             e.dataTransfer.dropEffect = 'move';
           }}
           onDrop={handleDropOnRoot}
