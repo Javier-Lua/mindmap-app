@@ -4,10 +4,7 @@ import { useNotes } from '../contexts/NotesContext';
 import FileService from '../services/FileService';
 
 // --- Local Storage Manager ---
-const GRAPH_STORAGE_KEY = 'messy-notes-graph';
-const LAST_SYNC_KEY = 'messy-notes-graph-sync';
 const VIEWPORT_STORAGE_KEY = 'messy-notes-viewport';
-const SYNC_INTERVAL = 60000;
 
 const GraphStorage = {
   async get() {
@@ -497,12 +494,10 @@ const detectLeidenCommunities = (nodes, edges) => {
 };
 
 // --- GRAPH VIEW COMPONENT ---
-const GraphView = ({ 
-  onNoteClick
-}) => {
+const GraphView = ({ onNoteClick }) => {
   const { notes, createNote, deleteNote, updateNote } = useNotes();
   
-  const [graphData, setGraphData] = useState(() => GraphStorage.get());
+  const [graphData, setGraphData] = useState({ metadata: {}, edges: [] });
   const [viewport, setViewport] = useState(() => ViewportStorage.get());
   
   const [interactionMode, setInteractionMode] = useState('IDLE');
@@ -512,13 +507,25 @@ const GraphView = ({
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [renamingNodeId, setRenamingNodeId] = useState(null);
   
-  const isSavingRef = useRef(false);
-  const lastServerSyncRef = useRef(0);
-  
+  const dragStartPos = useRef({ x: 0, y: 0 });
+  const viewportStartRef = useRef({ x: 0, y: 0, zoom: 1 });
+  const nodeStartRef = useRef(null);
+  const hasDragged = useRef(false);
+  const containerRef = useRef(null);
+  const animationRef = useRef(0);
+  const graphDataRef = useRef(graphData);
+
+  // Keep ref in sync
+  useEffect(() => {
+    graphDataRef.current = graphData;
+  }, [graphData]);
+
+  // Save viewport changes
   useEffect(() => {
     ViewportStorage.set(viewport);
   }, [viewport]);
   
+  // Load graph data on mount
   useEffect(() => {
     const loadFromFile = async () => {
       try {
@@ -532,14 +539,19 @@ const GraphView = ({
     loadFromFile();
   }, []);
   
+  // Save graph data on window close
   useEffect(() => {
-    const saveToFile = async () => {
-      await GraphStorage.set(graphData);
+    const handleBeforeUnload = () => {
+      GraphStorage.set(graphDataRef.current);
     };
     
-    const timer = setTimeout(saveToFile, 500);
-    return () => clearTimeout(timer);
-  }, [graphData]);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      // Save on unmount as well
+      GraphStorage.set(graphDataRef.current);
+    };
+  }, []);
 
   const nodes = useMemo(() => {
     return notes
@@ -558,75 +570,62 @@ const GraphView = ({
           vx,
           vy,
           radius: meta.radius ?? 8,
-          lastVisited: meta.lastVisited ?? new Date(note.updatedAt).getTime()
+          lastVisited: meta.lastVisited ?? 0
         };
       });
   }, [notes, graphData.metadata]);
-  
-  const dragStartPos = useRef({ x: 0, y: 0 });
-  const viewportStartRef = useRef({ x: 0, y: 0, zoom: 1 });
-  const nodeStartRef = useRef(null);
-  const hasDragged = useRef(false);
-  const containerRef = useRef(null);
-  const animationRef = useRef(0);
 
   const structureKey = useMemo(() => {
-    return nodes.map(n => n.id).sort().join(',') + '|' + (graphData.edges || []).map(e => e.id).sort().join(',');
-  }, [nodes.length, graphData.edges]); 
+    return notes.map(n => n.id).sort().join(',') + '|' + (graphData.edges || []).map(e => e.id).sort().join(',');
+  }, [notes.length, graphData.edges]); 
 
   const communities = useMemo(() => {
     return detectLeidenCommunities(nodes, graphData.edges || []);
   }, [structureKey]); 
 
+  // 3-LEVEL BRIGHTNESS SYSTEM
   const { nodeColors, glowStyles } = useMemo(() => {
     const colors = {};
     const glows = {};
 
-    const adj = {};
-    nodes.forEach(n => adj[n.id] = []);
-    (graphData.edges || []).forEach(e => {
-      if(nodes.some(n => n.id === e.source) && nodes.some(n => n.id === e.target)) {
-        adj[e.source].push(e.target);
-        adj[e.target].push(e.source);
-      }
-    });
-
     const now = Date.now();
-    const ONE_WEEK = 1000 * 60 * 60 * 24 * 7;
-    const RECENT_THRESHOLD = 1000 * 60 * 5;
+    const RECENT = 5 * 60 * 1000;      // 5 minutes
+    const MODERATE = 60 * 60 * 1000;   // 1 hour
+    // Everything else is OLD
 
     nodes.forEach(node => {
       const communityId = communities[node.id];
       const hue = hashString(communityId || node.id) % 360;
 
-      const neighborCommunities = new Set(adj[node.id].map(nid => communities[nid]));
-      const distinctExternalCommunities = new Set([...neighborCommunities].filter(c => c !== communityId));
-      const isBridge = distinctExternalCommunities.size > 0 && neighborCommunities.size > 1;
-
-      let sat = 55;
-      let light = 45;
-      
       const timeDiff = now - (node.lastVisited || 0);
 
-      if (timeDiff < RECENT_THRESHOLD) {
-        sat = 85;
-        light = 60;
-        glows[node.id] = `0 0 15px hsla(${hue}, ${sat}%, ${light}%, 0.6), 0 0 30px hsla(${hue}, ${sat}%, ${light}%, 0.2)`;
-      } else if (timeDiff > ONE_WEEK) {
-        sat = 15;
-        light = 25;
-      }
-
-      if (isBridge && timeDiff <= ONE_WEEK) {
-        sat = Math.max(0, sat - 20);
+      let sat, light, glow;
+      
+      if (timeDiff < RECENT) {
+        // LEVEL 1: Recently accessed (< 5 min) - BRIGHT
+        sat = 90;
+        light = 65;
+        glow = `0 0 20px hsla(${hue}, ${sat}%, ${light}%, 0.7), 0 0 40px hsla(${hue}, ${sat}%, ${light}%, 0.3)`;
+      } else if (timeDiff < MODERATE) {
+        // LEVEL 2: Moderately recent (5min - 1hr) - MEDIUM
+        sat = 65;
+        light = 50;
+        glow = `0 0 10px hsla(${hue}, ${sat}%, ${light}%, 0.4)`;
+      } else {
+        // LEVEL 3: Old (> 1hr) - DIM
+        sat = 35;
+        light = 35;
+        glow = 'none';
       }
 
       colors[node.id] = `hsl(${hue}, ${sat}%, ${light}%)`;
+      glows[node.id] = glow;
     });
 
     return { nodeColors: colors, glowStyles: glows };
-  }, [nodes, graphData.edges, communities]);
+  }, [nodes, communities]);
 
+  // Physics simulation
   useEffect(() => {
     const simulate = () => {
       setGraphData(prevData => {
@@ -644,14 +643,13 @@ const GraphView = ({
         const nodeMap = {};
         currentNodes.forEach(n => { nodeMap[n.id] = n; });
 
-        // PHYSICS PARAMETERS
-        const springStrength = 0.03;      // Less bouncy springs (was 0.05)
-        const repulsionStrength = 5000;    // Less repulsion, more clustering (was 10000)
-        const damping = 0.85;              // Much more damping, faster settling (was 0.9)
-        const centerForce = 0.01;          // Stronger pull to center (was 0.005)
-        const idealEdgeLength = 200;       // More space between connected nodes (was 150)
+        const springStrength = 0.03;
+        const repulsionStrength = 5000;
+        const damping = 0.85;
+        const centerForce = 0.01;
+        const idealEdgeLength = 200;
 
-        // REPULSION: All nodes push each other apart
+        // REPULSION
         for (let i = 0; i < currentNodes.length; i++) {
           for (let j = i + 1; j < currentNodes.length; j++) {
             const dx = currentNodes[i].x - currentNodes[j].x;
@@ -659,8 +657,7 @@ const GraphView = ({
             const distSq = dx * dx + dy * dy;
             const dist = Math.sqrt(distSq) || 0.1;
             
-            // Softer repulsion for more organic clustering
-            const f = repulsionStrength / (distSq + 200);  // Added offset for gentler falloff
+            const f = repulsionStrength / (distSq + 200);
 
             const fx = (dx / dist) * f;
             const fy = (dy / dist) * f;
@@ -676,7 +673,7 @@ const GraphView = ({
           }
         }
 
-        // ATTRACTION: Connected nodes pull together (spring force)
+        // ATTRACTION
         (prevData.edges || []).forEach(edge => {
           const s = nodeMap[edge.source];
           const t = nodeMap[edge.target];
@@ -685,7 +682,6 @@ const GraphView = ({
             const dy = t.y - s.y;
             const dist = Math.sqrt(dx * dx + dy * dy) || 0.1;
             
-            // Spring force with ideal length
             const force = (dist - idealEdgeLength) * springStrength;
 
             const fx = (dx / dist) * force;
@@ -702,47 +698,38 @@ const GraphView = ({
           }
         });
 
-        // UPDATE POSITIONS AND APPLY FORCES
+        // UPDATE POSITIONS
         currentNodes.forEach(n => {
           if (n.id === draggingNodeId) return;
 
-          // Gentle pull toward center for cohesion
           n.vx -= n.x * centerForce;
           n.vy -= n.y * centerForce;
 
-          // Strong damping for quick settling
           n.vx *= damping;
           n.vy *= damping;
 
-          // Update position
           n.x += n.vx;
           n.y += n.vy;
 
-          // Save to metadata
           nextMetadata[n.id] = {
             x: n.x,
             y: n.y,
             vx: n.vx,
             vy: n.vy,
             radius: n.radius,
-            lastVisited: nextMetadata[n.id]?.lastVisited
+            lastVisited: nextMetadata[n.id]?.lastVisited || 0
           };
         });
 
-        const updated = { ...prevData, metadata: nextMetadata };
-        GraphStorage.set(updated);
-
-        // Stop simulation when nodes have settled (lower threshold for faster stop)
         const maxVelocity = Math.max(
           ...currentNodes.map(n => Math.sqrt(n.vx * n.vx + n.vy * n.vy))
         );
         
-        if (maxVelocity < 0.05) {  // Slightly higher threshold (was 0.01) for more natural stopping
+        if (maxVelocity < 0.05) {
           cancelAnimationFrame(animationRef.current);
-          return prevData;
         }
         
-        return updated;
+        return { ...prevData, metadata: nextMetadata };
       });
 
       animationRef.current = requestAnimationFrame(simulate);
@@ -828,8 +815,8 @@ const GraphView = ({
     e.stopPropagation();
     
     const now = Date.now();
-    GraphStorage.updateMetadata(nodeId, { lastVisited: now });
     
+    // Update lastVisited in metadata
     setGraphData(prev => ({
       ...prev,
       metadata: {
@@ -899,7 +886,6 @@ const GraphView = ({
             vx: 0,
             vy: 0
           };
-          GraphStorage.set(updated);
         }
         return updated;
       });
@@ -932,11 +918,10 @@ const GraphView = ({
             source: connectionStartId,
             target: targetNode.id
           };
-          setGraphData(prev => {
-            const updated = { ...prev, edges: [...(prev.edges || []), newEdge] };
-            GraphStorage.set(updated);
-            return updated;
-          });
+          setGraphData(prev => ({
+            ...prev,
+            edges: [...(prev.edges || []), newEdge]
+          }));
         }
       }
     }
@@ -959,24 +944,20 @@ const GraphView = ({
         content: { type: 'doc', content: [] }
       });
       
-      setGraphData(prev => {
-        const updated = {
-          ...prev,
-          metadata: {
-            ...(prev.metadata || {}),
-            [newNote.id]: {
-              x: canvasPos.x,
-              y: canvasPos.y,
-              vx: (Math.random() - 0.5) * 2,
-              vy: (Math.random() - 0.5) * 2,
-              radius: 8,
-              lastVisited: Date.now()
-            }
+      setGraphData(prev => ({
+        ...prev,
+        metadata: {
+          ...(prev.metadata || {}),
+          [newNote.id]: {
+            x: canvasPos.x,
+            y: canvasPos.y,
+            vx: (Math.random() - 0.5) * 2,
+            vy: (Math.random() - 0.5) * 2,
+            radius: 8,
+            lastVisited: Date.now()
           }
-        };
-        GraphStorage.set(updated);
-        return updated;
-      });
+        }
+      }));
       
       setSelectedIds(new Set([newNote.id]));
     } catch (error) {
@@ -993,11 +974,10 @@ const GraphView = ({
       !selectedIds.has(e.target)
     );
     
-    setGraphData(prev => {
-      const updated = { ...prev, edges: updatedEdges };
-      GraphStorage.set(updated);
-      return updated;
-    });
+    setGraphData(prev => ({
+      ...prev,
+      edges: updatedEdges
+    }));
     
     for (const id of selectedIds) {
       if (nodes.some(n => n.id === id)) {
@@ -2079,9 +2059,7 @@ export default function MessyMap() {
   return (
     <>
       {currentView === 'GRAPH' ? (
-        <GraphView 
-          onNoteClick={handleNoteClick}
-        />
+        <GraphView onNoteClick={handleNoteClick} />
       ) : (
         <CanvasView 
           onBack={handleBackToGraph} 

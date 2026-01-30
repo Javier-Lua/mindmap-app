@@ -10,40 +10,27 @@ import { Typography } from '@tiptap/extension-typography';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
   Moon, Sun, Bold, Italic,
-  Highlighter, Loader,
+  Highlighter,
   List, ListOrdered, Code, Quote, Undo, Redo,
-  Layout, Check
+  Layout
 } from 'lucide-react';
 import { useNotes } from '../contexts/NotesContext';
 import FileService from '../services/FileService';
 
 /**
- * ====== FILE STORAGE INFORMATION ======
+ * ====== OBSIDIAN-STYLE FILE STORAGE ======
  * 
- * Notes are stored locally on your computer at:
- * ~/Documents/MessyNotes/notes/{note-id}.md
+ * Notes are stored locally at: ~/Documents/MessyNotes/notes/{note-id}.md
  * 
- * Each note is a Markdown file with:
- * - YAML frontmatter (metadata like title, dates, colors)
- * - Plain text content
+ * Saving strategy:
+ * - No debounce, no auto-save timers
+ * - Save on blur (when you click away)
+ * - Save on unmount (when switching notes)
+ * - Save on window close
  * 
- * Saves happen directly to your local filesystem (no cloud).
- * Changes are auto-saved 100ms after you stop typing (near-instant).
- * 
- * ======================================
+ * This prevents race conditions and data loss.
+ * =========================================
  */
-
-function useDebounce(callback, delay) {
-  const timeoutRef = useRef(null);
-  return useCallback((...args) => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    timeoutRef.current = setTimeout(() => {
-      callback(...args);
-    }, delay);
-  }, [callback, delay]);
-}
 
 export default function EditorPage() {
   const { id } = useParams();
@@ -51,7 +38,6 @@ export default function EditorPage() {
   const { updateNote } = useNotes();
   
   const [note, setNote] = useState(null);
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isA4, setIsA4] = useState(true);
   const [theme, setTheme] = useState(() => {
     return document.documentElement.getAttribute('data-theme') || 'dark';
@@ -64,6 +50,7 @@ export default function EditorPage() {
   const isLoadingRef = useRef(false);
   const isSavingRef = useRef(false);
   const editorUpdateRef = useRef(false);
+  const hasPendingChangesRef = useRef(false);
 
   const toggleTheme = () => {
     const newTheme = theme === 'dark' ? 'light' : 'dark';
@@ -103,39 +90,42 @@ export default function EditorPage() {
         rawText: text
       }));
       
-      setHasUnsavedChanges(true);
-      
-      // Near-instant save (100ms debounce to avoid excessive writes while typing fast)
-      debouncedSave(note.id, title, text, json);
+      // Mark that we have pending changes
+      hasPendingChangesRef.current = true;
     },
+    onBlur: () => {
+      // Save when editor loses focus (Obsidian-style)
+      if (hasPendingChangesRef.current && note?.id && editor && !isSavingRef.current) {
+        saveNote();
+      }
+    }
   }, [note?.id]);
 
-  // Save to local file system with proper content structure
-  const saveToFile = useCallback(async (noteId, title, text, content) => {
-    if (isSavingRef.current || currentNoteIdRef.current !== noteId) return;
+  // Save to local file system
+  const saveNote = useCallback(async () => {
+    if (isSavingRef.current || !note?.id || !editor) return;
+    if (!hasPendingChangesRef.current) return;
 
     isSavingRef.current = true;
 
     try {
-      await updateNote(noteId, {
-        content,
-        rawText: text,  // Store BOTH content and rawText
+      const currentContent = editor.getJSON();
+      const currentText = editor.getText();
+      const title = currentText?.split('\n')[0].slice(0, 50) || 'Untitled Thought';
+      
+      await updateNote(note.id, {
+        content: currentContent,
+        rawText: currentText,
         title
       });
 
-      // Only clear unsaved flag if we're still on the same note
-      if (currentNoteIdRef.current === noteId) {
-        setHasUnsavedChanges(false);
-      }
+      hasPendingChangesRef.current = false;
     } catch (error) {
-      console.error('Failed to save note to file:', error);
+      console.error('Failed to save note:', error);
     } finally {
       isSavingRef.current = false;
     }
-  }, [updateNote]);
-
-  // 100ms debounce for near-instant saves
-  const debouncedSave = useDebounce(saveToFile, 100);
+  }, [note?.id, editor, updateNote]);
 
   // Load note when ID changes
   useEffect(() => {
@@ -143,28 +133,32 @@ export default function EditorPage() {
       return;
     }
 
-    // Save previous note immediately before switching
+    // Save previous note before switching
     const savePreviousNote = async () => {
-      if (currentNoteIdRef.current && hasUnsavedChanges && editor && !isSavingRef.current) {
+      if (currentNoteIdRef.current && hasPendingChangesRef.current && editor && !isSavingRef.current) {
         const currentContent = editor.getJSON();
         const currentText = editor.getText();
         const title = currentText?.split('\n')[0].slice(0, 50) || 'Untitled Thought';
         
-        await saveToFile(currentNoteIdRef.current, title, currentText, currentContent);
+        await updateNote(currentNoteIdRef.current, {
+          content: currentContent,
+          rawText: currentText,
+          title
+        });
+        hasPendingChangesRef.current = false;
       }
     };
 
     savePreviousNote().then(() => {
       currentNoteIdRef.current = id;
-      setHasUnsavedChanges(false);
       loadNote();
     });
-  }, [id, editor, hasUnsavedChanges, saveToFile]);
+  }, [id, editor, updateNote]);
 
   // Save on unmount
   useEffect(() => {
     return () => {
-      if (hasUnsavedChanges && editor && note?.id && !isSavingRef.current) {
+      if (hasPendingChangesRef.current && editor && note?.id && !isSavingRef.current) {
         const currentContent = editor.getJSON();
         const currentText = editor.getText();
         const title = currentText?.split('\n')[0].slice(0, 50) || 'Untitled Thought';
@@ -177,7 +171,19 @@ export default function EditorPage() {
         }).catch(console.error);
       }
     };
-  }, [editor, note?.id, updateNote, hasUnsavedChanges]);
+  }, [editor, note?.id, updateNote]);
+
+  // Save on window close
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (hasPendingChangesRef.current && editor && note?.id) {
+        saveNote();
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [saveNote, editor, note?.id]);
 
   const loadNote = async () => {
     if (id.startsWith('temp-')) {
@@ -198,7 +204,7 @@ export default function EditorPage() {
       }
 
       setNote(res);
-      setHasUnsavedChanges(false);
+      hasPendingChangesRef.current = false;
       
       if (editor && !editor.isDestroyed) {
         editorUpdateRef.current = true;
@@ -251,22 +257,6 @@ export default function EditorPage() {
   return (
     <div className="flex h-screen theme-bg-primary theme-text-primary overflow-hidden flex-col">
       <div className="toolbar-themed p-3 flex items-center gap-2 flex-wrap">
-        <div className="flex items-center gap-2 mr-4">
-          {hasUnsavedChanges ? (
-            <div className="flex items-center gap-2 text-theme-tertiary" title="Saving...">
-              <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></div>
-              <span className="text-xs">Saving...</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 text-green-400" title="All changes saved to file">
-              <Check size={14} />
-              <span className="text-xs">Saved</span>
-            </div>
-          )}
-        </div>
-
-        <div className="h-6 w-px border-theme-primary" />
-
         <button
           onClick={() => editor?.chain().focus().undo().run()}
           disabled={!editor?.can().undo()}
