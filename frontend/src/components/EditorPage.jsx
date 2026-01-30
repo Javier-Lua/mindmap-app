@@ -195,11 +195,20 @@ export default function EditorPage() {
         rawTextPreview: cachedNote.rawText?.substring(0, 50)
       } : 'NULL');
       
-      // CRITICAL: Only use cached note if it has actual content OR is confirmed empty
+      // CRITICAL: Check if content is actually non-empty
+      const hasNonEmptyContent = (content) => {
+        if (!content || typeof content !== 'object') return false;
+        if (!Array.isArray(content.content)) return false;
+        if (content.content.length === 0) return false;
+        // Check if any paragraph has actual text
+        return content.content.some(node => 
+          node.content && node.content.length > 0
+        );
+      };
+      
       const hasActualContent = cachedNote && (
-        (cachedNote.content && typeof cachedNote.content === 'object') ||
-        (cachedNote.rawText && cachedNote.rawText.length > 0) ||
-        cachedNote.updatedAt // If it's been updated, trust it
+        hasNonEmptyContent(cachedNote.content) ||
+        (cachedNote.rawText && cachedNote.rawText.trim().length > 0)
       );
 
       if (hasActualContent) {

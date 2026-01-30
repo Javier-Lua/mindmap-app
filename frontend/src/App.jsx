@@ -44,6 +44,8 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
 
   const handleDeleteNote = async (noteId, e) => {
     e.stopPropagation();
+    e.preventDefault(); // Prevent any default behavior
+    
     if (!confirm('Delete this note?')) return;
     
     await deleteNote(noteId);
@@ -51,6 +53,21 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
     if (currentNoteId === noteId) {
       navigate('/');
     }
+  };
+
+  const handleNoteClick = (noteId, e) => {
+    // Don't navigate if clicking the delete button
+    if (e.target.closest('.delete-button')) {
+      return;
+    }
+    
+    // Don't re-navigate if already on this note
+    if (currentNoteId === noteId) {
+      return;
+    }
+    
+    // Navigate to the note
+    onSelectNote(noteId);
   };
 
   const filteredNotes = notes
@@ -173,11 +190,7 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
           {getDisplayNotes().map(note => (
             <button
               key={note.id}
-              onClick={(e) => {
-                e.preventDefault();
-                if (currentNoteId === note.id) return;
-                onSelectNote(note.id);
-              }}
+              onClick={(e) => handleNoteClick(note.id, e)}
               className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors group ${
                 currentNoteId === note.id ? 'bg-theme-tertiary text-theme-primary ring-2 ring-purple-500 ring-opacity-30' : 'theme-bg-hover text-theme-secondary'
               }`}
@@ -192,11 +205,8 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
               {note.sticky && <Star size={10} className="text-yellow-400" fill="currentColor" />}
               {note.ephemeral && <Zap size={10} className="text-theme-tertiary" />}
               <div
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDeleteNote(note.id, e);
-                }}
-                className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-600 rounded transition-opacity cursor-pointer"
+                onClick={(e) => handleDeleteNote(note.id, e)}
+                className="delete-button opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-600 rounded transition-opacity cursor-pointer"
                 title="Delete"
               >
                 <Trash2 size={10} className="text-red-400" />
