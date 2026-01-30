@@ -13,7 +13,7 @@ export const useNotes = () => {
 
 export const NotesProvider = ({ children }) => {
   const [notes, setNotes] = useState([]);
-  const [folders, setFolders] = useState([]); // Kept for compatibility, not used in local version
+  const [folders, setFolders] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [lastSync, setLastSync] = useState(null);
   const [initialized, setInitialized] = useState(false);
@@ -25,7 +25,10 @@ export const NotesProvider = ({ children }) => {
       try {
         await FileService.init();
         setInitialized(true);
-        await loadNotes(true);
+        await Promise.all([
+          loadNotes(true),
+          loadFolders()
+        ]);
       } catch (error) {
         console.error('Failed to initialize app:', error);
       }
@@ -48,11 +51,14 @@ export const NotesProvider = ({ children }) => {
   }, []);
 
   const loadFolders = useCallback(async () => {
-    // Folders are not used in local version, but kept for compatibility
-    setFolders([]);
+    try {
+      const serverFolders = await FileService.getFolders();
+      setFolders(serverFolders);
+    } catch (error) {
+      console.error('Failed to load folders:', error);
+    }
   }, []);
 
-  // FIXED: Return current note from state, not from a ref
   const getNote = useCallback((noteId) => {
     return notes.find(n => n.id === noteId);
   }, [notes]);
@@ -171,23 +177,60 @@ export const NotesProvider = ({ children }) => {
     }
   }, []);
 
-  const createFolder = useCallback(async (name) => {
-    // Folders not implemented in local version
-    console.warn('Folders not implemented in local version');
-    return null;
+  const createFolder = useCallback(async (name, parentId = null) => {
+    try {
+      const newFolder = await FileService.createFolder(name, parentId);
+      setFolders(prev => [...prev, newFolder]);
+      return newFolder;
+    } catch (error) {
+      console.error('Failed to create folder:', error);
+      throw error;
+    }
   }, []);
 
   const updateFolder = useCallback(async (folderId, updates) => {
-    console.warn('Folders not implemented in local version');
-  }, []);
+    // Optimistically update local state
+    setFolders(prev => prev.map(f => 
+      f.id === folderId ? { ...f, ...updates } : f
+    ));
+
+    try {
+      await FileService.updateFolder(folderId, updates);
+    } catch (error) {
+      console.error('Failed to update folder:', error);
+      await loadFolders();
+    }
+  }, [loadFolders]);
 
   const deleteFolder = useCallback(async (folderId) => {
-    console.warn('Folders not implemented in local version');
-  }, []);
+    // Optimistically remove from local state
+    setFolders(prev => prev.filter(f => f.id !== folderId));
+
+    try {
+      await FileService.deleteFolder(folderId);
+      // Reload notes since they may have been moved
+      await loadNotes(false);
+    } catch (error) {
+      console.error('Failed to delete folder:', error);
+      await Promise.all([loadFolders(), loadNotes(false)]);
+    }
+  }, [loadFolders, loadNotes]);
+
+  const moveNoteToFolder = useCallback(async (noteId, folderId) => {
+    try {
+      await updateNote(noteId, { folderId });
+    } catch (error) {
+      console.error('Failed to move note:', error);
+      throw error;
+    }
+  }, [updateNote]);
 
   const refresh = useCallback(async () => {
-    await loadNotes(false);
-  }, [loadNotes]);
+    await Promise.all([
+      loadNotes(false),
+      loadFolders()
+    ]);
+  }, [loadNotes, loadFolders]);
 
   const value = {
     notes,
@@ -206,6 +249,7 @@ export const NotesProvider = ({ children }) => {
     createFolder,
     updateFolder,
     deleteFolder,
+    moveNoteToFolder,
     refresh
   };
 

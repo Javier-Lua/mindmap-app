@@ -10,6 +10,7 @@
  * ├── notes/              ← Notes as .md files with YAML frontmatter
  * │   ├── {uuid}.md
  * │   └── {uuid}.md
+ * ├── folders.json        ← Folder hierarchy
  * ├── canvas/             ← Canvas data as JSON (per-note mindmaps)
  * │   ├── {uuid}.json
  * │   └── {uuid}.json
@@ -46,6 +47,22 @@ struct Note {
     #[serde(rename = "type")]
     note_type: String,
     color: String,
+    #[serde(rename = "folderId", skip_serializing_if = "Option::is_none")]
+    folder_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct Folder {
+    id: String,
+    name: String,
+    #[serde(rename = "parentId", skip_serializing_if = "Option::is_none")]
+    parent_id: Option<String>,
+    #[serde(rename = "createdAt")]
+    created_at: String,
+    #[serde(rename = "updatedAt")]
+    updated_at: String,
+    #[serde(default)]
+    expanded: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -89,6 +106,11 @@ impl AppState {
     /// Returns path to graph file: ~/Documents/MessyNotes/graph.json
     fn graph_file(&self) -> PathBuf {
         self.data_dir.join("graph.json")
+    }
+
+    /// Returns path to folders file: ~/Documents/MessyNotes/folders.json
+    fn folders_file(&self) -> PathBuf {
+        self.data_dir.join("folders.json")
     }
 
     /// Returns path to canvas file: ~/Documents/MessyNotes/canvas/{note_id}.json
@@ -199,6 +221,9 @@ async fn get_notes(state: State<'_, AppState>) -> Result<Vec<Note>, String> {
                         .and_then(|v| v.as_str())
                         .unwrap_or("#ffffff")
                         .to_string(),
+                    folder_id: metadata.get("folderId")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
                 });
             }
         }
@@ -272,6 +297,9 @@ async fn get_note(id: String, state: State<'_, AppState>) -> Result<Note, String
             .and_then(|v| v.as_str())
             .unwrap_or("#ffffff")
             .to_string(),
+        folder_id: metadata.get("folderId")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
     })
 }
 
@@ -284,6 +312,7 @@ async fn create_note(
     ephemeral: Option<bool>,
     note_type: Option<String>,
     color: Option<String>,
+    folder_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Note, String> {
     state.ensure_dirs().map_err(|e| e.to_string())?;
@@ -305,6 +334,7 @@ async fn create_note(
         archived: false,
         note_type: note_type.unwrap_or_else(|| "text".to_string()),
         color: color.unwrap_or_else(|| "#ffffff".to_string()),
+        folder_id,
     };
     
     save_note(&note, &state)?;
@@ -321,6 +351,7 @@ async fn update_note(
     sticky: Option<bool>,
     ephemeral: Option<bool>,
     archived: Option<bool>,
+    folder_id: Option<Option<String>>,
     state: State<'_, AppState>,
 ) -> Result<Note, String> {
     let mut note = get_note(id.clone(), state.clone()).await?;
@@ -343,7 +374,10 @@ async fn update_note(
     if let Some(a) = archived {
         note.archived = a;
     }
-    
+    if let Some(fid) = folder_id {
+        note.folder_id = fid; // fid is Option<String>
+    }
+
     note.updated_at = Utc::now().to_rfc3339();
     
     save_note(&note, &state)?;
@@ -400,6 +434,122 @@ async fn delete_all_notes(state: State<'_, AppState>) -> Result<usize, String> {
     save_graph(&graph, &state)?;
     
     Ok(count)
+}
+
+// ==================== FOLDER OPERATIONS ====================
+// Folders are stored as: ~/Documents/MessyNotes/folders.json
+
+#[tauri::command]
+async fn get_folders(state: State<'_, AppState>) -> Result<Vec<Folder>, String> {
+    let path = state.folders_file();
+    
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let folders: Vec<Folder> = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse folders.json: {}", e))?;
+    
+    Ok(folders)
+}
+
+#[tauri::command]
+async fn create_folder(
+    name: String,
+    parent_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Folder, String> {
+    state.ensure_dirs().map_err(|e| e.to_string())?;
+    
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+    
+    let folder = Folder {
+        id: id.clone(),
+        name,
+        parent_id,
+        created_at: now.clone(),
+        updated_at: now,
+        expanded: true,
+    };
+    
+    let mut folders = get_folders(state.clone()).await?;
+    folders.push(folder.clone());
+    
+    save_folders(&folders, &state)?;
+    
+    Ok(folder)
+}
+
+#[tauri::command]
+async fn update_folder(
+    id: String,
+    name: Option<String>,
+    parent_id: Option<String>,
+    expanded: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<Folder, String> {
+    let mut folders = get_folders(state.clone()).await?;
+    
+    let folder = folders.iter_mut()
+        .find(|f| f.id == id)
+        .ok_or("Folder not found")?;
+    
+    if let Some(n) = name {
+        folder.name = n;
+    }
+    if parent_id.is_some() {
+        folder.parent_id = parent_id;
+    }
+    if let Some(e) = expanded {
+        folder.expanded = e;
+    }
+    
+    folder.updated_at = Utc::now().to_rfc3339();
+    
+    let updated_folder = folder.clone();
+    save_folders(&folders, &state)?;
+    
+    Ok(updated_folder)
+}
+
+#[tauri::command]
+async fn delete_folder(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut folders = get_folders(state.clone()).await?;
+    
+    // Move all notes in this folder to root (null folderId)
+    let notes = get_notes(state.clone()).await?;
+    for note in notes {
+        if note.folder_id.as_ref() == Some(&id) {
+            update_note(
+                note.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(None),
+                state.clone()
+            ).await?;
+        }
+    }
+    
+    // Remove the folder
+    folders.retain(|f| f.id != id);
+    
+    // Move child folders to parent
+    let parent_id = folders.iter().find(|f| f.id == id).and_then(|f| f.parent_id.clone());
+    for folder in folders.iter_mut() {
+        if folder.parent_id.as_ref() == Some(&id) {
+            folder.parent_id = parent_id.clone();
+        }
+    }
+    
+    save_folders(&folders, &state)?;
+    
+    Ok(())
 }
 
 // ==================== GRAPH OPERATIONS ====================
@@ -476,7 +626,7 @@ async fn save_canvas_data(
 /// Saves a note to disk as a .md file with YAML frontmatter
 /// Stores BOTH the TipTap content structure AND rawText for compatibility
 fn save_note(note: &Note, state: &AppState) -> Result<(), String> {
-    let metadata = serde_json::json!({
+    let mut metadata = serde_json::json!({
         "title": note.title,
         "updatedAt": note.updated_at,
         "createdAt": note.created_at,
@@ -485,8 +635,12 @@ fn save_note(note: &Note, state: &AppState) -> Result<(), String> {
         "archived": note.archived,
         "type": note.note_type,
         "color": note.color,
-        "content": note.content,  // CRITICAL: Store the TipTap JSON structure
+        "content": note.content,
     });
+    
+    if let Some(ref folder_id) = note.folder_id {
+        metadata["folderId"] = serde_json::json!(folder_id);
+    }
     
     let frontmatter = serde_json::to_string_pretty(&metadata)
         .map_err(|e| e.to_string())?;
@@ -499,6 +653,17 @@ fn save_note(note: &Note, state: &AppState) -> Result<(), String> {
     
     let path = state.notes_dir().join(format!("{}.md", note.id));
     fs::write(&path, content).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+/// Saves folders to disk as JSON
+fn save_folders(folders: &[Folder], state: &AppState) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(folders)
+        .map_err(|e| format!("Failed to serialize folders: {}", e))?;
+    
+    let path = state.folders_file();
+    fs::write(&path, json).map_err(|e| e.to_string())?;
     
     Ok(())
 }
@@ -550,6 +715,10 @@ fn main() {
             update_note,
             delete_note,
             delete_all_notes,
+            get_folders,
+            create_folder,
+            update_folder,
+            delete_folder,
             get_graph,
             save_graph_data,
             get_canvas,

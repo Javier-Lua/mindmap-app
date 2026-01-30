@@ -20,7 +20,7 @@ import FileService from '../services/FileService';
 export default function EditorPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { notes, updateNoteLocal, getNote } = useNotes();
+  const { updateNoteLocal } = useNotes();
   
   const [note, setNote] = useState(null);
   const [isA4, setIsA4] = useState(true);
@@ -29,9 +29,11 @@ export default function EditorPage() {
   });
   const [fontSize, setFontSize] = useState(16);
   const [fontFamily, setFontFamily] = useState('Inter');
+  const [isLoading, setIsLoading] = useState(true);
   
-  // Refs to prevent race conditions
-  const currentNoteIdRef = useRef(null);
+  // Use refs to prevent race conditions
+  const noteIdRef = useRef(null);
+  const isSavingRef = useRef(false);
   const isLoadingRef = useRef(false);
   const editorUpdateRef = useRef(false);
   const saveTimeoutRef = useRef(null);
@@ -44,37 +46,51 @@ export default function EditorPage() {
     localStorage.setItem('theme', newTheme);
   };
 
-  // Debounced save to file system (background operation)
+  // Debounced save to file system
   const saveToFileSystem = useCallback(async (noteId, updates) => {
-    console.log('💾 Saving to file system:', noteId, updates);
+    if (isSavingRef.current) {
+      // Queue the updates
+      pendingUpdatesRef.current = {
+        ...pendingUpdatesRef.current,
+        ...updates
+      };
+      return;
+    }
+
+    isSavingRef.current = true;
+    const allUpdates = { ...pendingUpdatesRef.current, ...updates };
+    pendingUpdatesRef.current = {};
+
     try {
-      await FileService.updateNote(noteId, updates);
-      console.log('✅ Saved to file system successfully');
+      await FileService.updateNote(noteId, allUpdates);
     } catch (error) {
       console.error('❌ Failed to save to file system:', error);
+    } finally {
+      isSavingRef.current = false;
+      
+      // If more updates came in while saving, save them now
+      if (Object.keys(pendingUpdatesRef.current).length > 0) {
+        const queued = { ...pendingUpdatesRef.current };
+        pendingUpdatesRef.current = {};
+        saveToFileSystem(noteId, queued);
+      }
     }
   }, []);
 
   // Schedule a save (debounced)
   const scheduleSave = useCallback((noteId, updates) => {
-    console.log('⏱️ Scheduling save for:', noteId);
-    
-    // Merge with pending updates
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
     pendingUpdatesRef.current = {
       ...pendingUpdatesRef.current,
       ...updates
     };
 
-    // Clear existing timeout
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-    }
-
-    // Schedule new save (300ms debounce)
     saveTimeoutRef.current = setTimeout(() => {
       const toSave = { ...pendingUpdatesRef.current };
       pendingUpdatesRef.current = {};
-      console.log('🚀 Debounce completed, saving now:', toSave);
       saveToFileSystem(noteId, toSave);
     }, 300);
   }, [saveToFileSystem]);
@@ -95,12 +111,9 @@ export default function EditorPage() {
       },
     },
     onUpdate: ({ editor }) => {
-      // CRITICAL: Get current note ID from ref, not closure
-      const currentId = currentNoteIdRef.current;
+      const currentId = noteIdRef.current;
       
-      // Ignore programmatic updates or if no note loaded
       if (editorUpdateRef.current || !currentId) {
-        console.log('⏭️ Ignoring editor update (programmatic or no note)');
         return;
       }
       
@@ -114,52 +127,43 @@ export default function EditorPage() {
         rawText: text
       };
 
-      console.log('✏️ Editor updated for note:', currentId, 'title:', title);
-
-      // 1. Update local state immediately
+      // Update local state
       setNote(prev => {
-        // Only update if we're still on the same note
-        if (prev?.id !== currentId) {
-          console.warn('⚠️ Note changed during update, ignoring');
-          return prev;
-        }
-        return {
-          ...prev,
-          ...updates
-        };
+        if (prev?.id !== currentId) return prev;
+        return { ...prev, ...updates };
       });
 
-      // 2. Update context immediately (this updates sidebar instantly)
-      console.log('🌐 Calling updateNoteLocal for:', currentId);
+      // Update context
       updateNoteLocal(currentId, updates);
 
-      // 3. Schedule background save to file system
+      // Schedule save
       scheduleSave(currentId, updates);
     }
-  }, [updateNoteLocal, scheduleSave]); // REMOVED note?.id dependency!
+  }, [updateNoteLocal, scheduleSave]);
 
-  // Update editor content when note changes
+  // Update editor content when note changes (but avoid updates during typing)
   useEffect(() => {
     if (!editor || !note || editor.isDestroyed) {
       return;
     }
 
-    // Don't update if we're currently editing
+    // Don't update if user is typing
     if (document.activeElement?.closest('.ProseMirror')) {
-      console.log('⏭️ Skipping editor update - user is typing');
       return;
     }
 
-    console.log('🔄 Note changed, updating editor content for:', note.id);
-    
+    // Only update if content actually changed
+    const currentContent = editor.getJSON();
+    if (JSON.stringify(currentContent) === JSON.stringify(note.content)) {
+      return;
+    }
+
     editorUpdateRef.current = true;
     
     try {
       if (note.content && typeof note.content === 'object') {
-        console.log('   Setting content from note.content object');
         editor.commands.setContent(note.content);
       } else if (note.rawText && note.rawText.trim()) {
-        console.log('   Setting content from note.rawText:', note.rawText.substring(0, 50));
         editor.commands.setContent({
           type: 'doc',
           content: [{
@@ -168,153 +172,85 @@ export default function EditorPage() {
           }]
         });
       } else {
-        console.log('   Setting empty content');
         editor.commands.setContent('');
       }
     } finally {
-      // Reset the flag after a short delay to allow the update to complete
       setTimeout(() => {
         editorUpdateRef.current = false;
       }, 100);
     }
-  }, [editor, note?.id]); // Only depend on note ID, not full note object
+  }, [editor, note?.id, note?.content]);
 
   // Load note when ID changes
   useEffect(() => {
-    console.log('🔄 ID changed to:', id, 'Current:', currentNoteIdRef.current);
-    
-    if (!id || currentNoteIdRef.current === id) {
-      console.log('⏭️ Skipping load (same ID or no ID)');
-      return;
-    }
+    const loadNote = async () => {
+      if (!id || noteIdRef.current === id) {
+        return;
+      }
 
-    // Save previous note immediately before switching
-    const savePreviousNote = async () => {
-      if (currentNoteIdRef.current && saveTimeoutRef.current) {
+      if (id.startsWith('temp-')) {
+        navigate('/', { replace: true });
+        return;
+      }
+
+      if (isLoadingRef.current) {
+        return;
+      }
+
+      // Save previous note before switching
+      if (noteIdRef.current && saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
         const toSave = { ...pendingUpdatesRef.current };
         pendingUpdatesRef.current = {};
         if (Object.keys(toSave).length > 0) {
-          console.log('💾 Saving previous note before switch:', currentNoteIdRef.current);
-          await saveToFileSystem(currentNoteIdRef.current, toSave);
+          await saveToFileSystem(noteIdRef.current, toSave);
         }
+      }
+
+      noteIdRef.current = id;
+      isLoadingRef.current = true;
+      setIsLoading(true);
+
+      try {
+        const loadedNote = await FileService.getNote(id);
+        
+        if (noteIdRef.current !== id) {
+          return;
+        }
+
+        setNote(loadedNote);
+      } catch (error) {
+        if (noteIdRef.current !== id) {
+          return;
+        }
+        console.error('❌ Failed to load note:', error);
+        setTimeout(() => {
+          navigate('/', { replace: true });
+        }, 1000);
+      } finally {
+        isLoadingRef.current = false;
+        setIsLoading(false);
       }
     };
 
-    savePreviousNote().then(() => {
-      currentNoteIdRef.current = id;
-      loadNote();
-    });
-  }, [id, saveToFileSystem]);
+    loadNote();
+  }, [id, navigate, saveToFileSystem]);
 
   // Save on unmount
   useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
-        const toSave = { ...pendingUpdatesRef.current };
-        if (note?.id && Object.keys(toSave).length > 0) {
-          console.log('🔚 Component unmounting, saving:', note.id);
-          saveToFileSystem(note.id, toSave);
-        }
+      }
+      
+      const toSave = { ...pendingUpdatesRef.current };
+      if (noteIdRef.current && Object.keys(toSave).length > 0) {
+        FileService.updateNote(noteIdRef.current, toSave);
       }
     };
-  }, [note?.id, saveToFileSystem]);
+  }, []);
 
-  const loadNote = async () => {
-    console.log('📖 Loading note:', id);
-    
-    if (id.startsWith('temp-')) {
-      console.warn('⚠️ Attempted to load temporary note, redirecting...');
-      navigate('/', { replace: true });
-      return;
-    }
-
-    if (isLoadingRef.current) {
-      console.log('⏸️ Already loading, skipping...');
-      return;
-    }
-    isLoadingRef.current = true;
-
-    try {
-      // Check if note is already in context with actual content
-      console.log('🔍 Checking context for note:', id);
-      const cachedNote = getNote(id);
-      console.log('📦 Context returned:', cachedNote ? {
-        id: cachedNote.id,
-        title: cachedNote.title,
-        hasContent: !!cachedNote.content,
-        hasRawText: !!cachedNote.rawText,
-        contentType: typeof cachedNote.content,
-        rawTextPreview: cachedNote.rawText?.substring(0, 50)
-      } : 'NULL');
-      
-      // CRITICAL: Check if content is actually non-empty
-      const hasNonEmptyContent = (content) => {
-        if (!content || typeof content !== 'object') return false;
-        if (!Array.isArray(content.content)) return false;
-        if (content.content.length === 0) return false;
-        // Check if any paragraph has actual text
-        return content.content.some(node => 
-          node.content && node.content.length > 0
-        );
-      };
-      
-      const hasActualContent = cachedNote && (
-        hasNonEmptyContent(cachedNote.content) ||
-        (cachedNote.rawText && cachedNote.rawText.trim().length > 0)
-      );
-
-      if (hasActualContent) {
-        console.log('✅ Using cached note from context (has actual content)');
-        
-        // Check if we're still on the same note
-        if (currentNoteIdRef.current !== id) {
-          console.log('⚠️ Note ID changed during load, aborting');
-          return;
-        }
-        
-        // Just set the note - the useEffect will update the editor
-        setNote(cachedNote);
-        isLoadingRef.current = false;
-        return;
-      }
-
-      // Load from file system if not in context or no content
-      console.log('📂 Loading from file system:', id);
-      const res = await FileService.getNote(id);
-      console.log('📄 File system returned:', {
-        id: res.id,
-        title: res.title,
-        hasContent: !!res.content,
-        hasRawText: !!res.rawText,
-        rawTextPreview: res.rawText?.substring(0, 50)
-      });
-
-      // Check if we're still on the same note
-      if (currentNoteIdRef.current !== id) {
-        console.log('⚠️ Note ID changed during load, aborting');
-        return;
-      }
-
-      // Just set the note - the useEffect will update the editor
-      setNote(res);
-      
-    } catch (error) {
-      if (currentNoteIdRef.current !== id) {
-        return;
-      }
-
-      console.error('❌ Failed to load note:', error);
-      setTimeout(() => {
-        navigate('/', { replace: true });
-      }, 1000);
-    } finally {
-      isLoadingRef.current = false;
-    }
-  };
-
-  if (!note) {
+  if (isLoading || !note) {
     return (
       <div className="min-h-screen flex items-center justify-center theme-bg-primary">
         <div className="text-center">

@@ -1,36 +1,28 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Folder, FileText, Brain, Plus, Network, Sparkles, Trash2, Edit3, AlertTriangle } from 'lucide-react';
+import { Folder, FileText, Brain, Network, Sparkles, Trash2, AlertTriangle } from 'lucide-react';
 import { useNotes } from '../contexts/NotesContext';
 
-export default function Dashboard({ user }) {
+export default function Dashboard() {
   const navigate = useNavigate();
   const { 
     notes, 
     folders, 
     loadNotes, 
     loadFolders, 
-    createFolder, 
-    updateFolder, 
-    deleteFolder, 
     deleteNote, 
     deleteAllNotes,
     lastSync 
   } = useNotes();
   
-  const [newFolderName, setNewFolderName] = useState('');
-  const [showNewFolder, setShowNewFolder] = useState(false);
   const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
   const [deleteAllConfirm, setDeleteAllConfirm] = useState('');
   const [isDeletingAll, setIsDeletingAll] = useState(false);
 
   useEffect(() => {
-    // Only reload if data is stale (older than 5 seconds)
     const now = Date.now();
     const isStale = !lastSync || (now - lastSync) > 5000;
     
-    // Only load if stale AND we haven't loaded yet
-    // Don't reload just because notes/folders are empty (user might have deleted all)
     if (isStale && notes.length === 0 && !lastSync) {
       loadNotes(true);
     }
@@ -39,28 +31,6 @@ export default function Dashboard({ user }) {
       loadFolders();
     }
   }, [loadNotes, loadFolders, lastSync, notes.length, folders.length]);
-
-  const handleCreateFolder = async () => {
-    if (!newFolderName.trim()) return;
-    try {
-      await createFolder(newFolderName);
-      setNewFolderName('');
-      setShowNewFolder(false);
-    } catch (error) {
-      alert('Failed to create folder. Please try again.');
-    }
-  };
-
-  const handleDeleteFolder = async (folderId, e) => {
-    e.stopPropagation();
-    if (!confirm('Delete this folder? Notes will be moved to root.')) return;
-    
-    try {
-      await deleteFolder(folderId);
-    } catch (error) {
-      alert('Failed to delete folder. Please try again.');
-    }
-  };
 
   const handleDeleteNote = async (noteId, e) => {
     e.stopPropagation();
@@ -96,7 +66,7 @@ export default function Dashboard({ user }) {
   const totalLinks = 0;
 
   return (
-    <div className="min-h-screen theme-bg-primary theme-text-primary">
+    <div className="min-h-screen theme-bg-primary theme-text-primary overflow-auto">
       <div className="max-w-7xl mx-auto p-8">
         <header className="flex justify-between items-center mb-10 pb-6 border-b border-theme-primary">
           <div>
@@ -162,83 +132,12 @@ export default function Dashboard({ user }) {
         <section className="mb-10">
           <div className="flex justify-between items-center mb-5">
             <h2 className="text-xl font-bold theme-text-primary">Folders</h2>
-            <button
-              onClick={() => setShowNewFolder(!showNewFolder)}
-              className="flex items-center gap-2 px-4 py-2 btn-secondary rounded-lg shadow-sm transition-all duration-200 font-medium text-sm"
-            >
-              <Plus size={16} /> New Folder
-            </button>
           </div>
 
-          {showNewFolder && (
-            <div className="mb-5 card-themed rounded-lg p-5">
-              <div className="flex gap-3">
-                <input
-                  type="text"
-                  value={newFolderName}
-                  onChange={(e) => setNewFolderName(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleCreateFolder()}
-                  placeholder="Folder name..."
-                  className="flex-1 px-4 py-2 input-themed rounded-lg text-sm"
-                  autoFocus
-                />
-                <button
-                  onClick={handleCreateFolder}
-                  className="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm"
-                >
-                  Create
-                </button>
-                <button
-                  onClick={() => {
-                    setShowNewFolder(false);
-                    setNewFolderName('');
-                  }}
-                  className="px-5 py-2 btn-secondary rounded-lg transition-colors text-sm"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="grid grid-cols-4 gap-4">
-            {folders.map((f) => (
-              <div
-                key={f.id}
-                onClick={() => navigate(`/mindmap/${f.id}`)}
-                className="group card-themed rounded-lg p-5 hover:border-blue-500 cursor-pointer transition-all duration-200 relative"
-              >
-                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                  <button
-                    onClick={(e) => handleDeleteFolder(f.id, e)}
-                    className="p-1.5 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
-                    title="Delete folder"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-                
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="p-2 rounded-lg bg-theme-tertiary">
-                    <Folder className="text-theme-secondary" size={20} />
-                  </div>
-                </div>
-                <h3 className="font-semibold theme-text-primary mb-1 group-hover:text-blue-400 transition-colors">
-                  {f.name}
-                </h3>
-                <p className="text-sm text-theme-tertiary">{f._count?.notes || 0} notes</p>
-              </div>
-            ))}
-            
-            {folders.length === 0 && !showNewFolder && (
-              <div
-                onClick={() => setShowNewFolder(true)}
-                className="border-2 border-dashed border-theme-primary rounded-lg flex flex-col items-center justify-center text-theme-tertiary cursor-pointer hover:border-blue-500 hover:text-blue-400 transition-all duration-200 p-5 min-h-[140px]"
-              >
-                <Plus size={28} className="mb-2" />
-                <p className="font-medium text-sm">Create folder</p>
-              </div>
-            )}
+          <div className="card-themed rounded-lg p-8 text-center">
+            <Folder className="mx-auto mb-3 text-theme-tertiary" size={40} />
+            <p className="text-theme-secondary mb-3">Folders are managed in the sidebar</p>
+            <p className="text-sm text-theme-tertiary">Use the sidebar to create, organize, and navigate folders</p>
           </div>
         </section>
 

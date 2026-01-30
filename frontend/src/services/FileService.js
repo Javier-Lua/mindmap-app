@@ -7,6 +7,7 @@ import { invoke } from '@tauri-apps/api/tauri';
  * 
  * Files are stored in:
  * - Notes: ~/Documents/MessyNotes/notes/{id}.md
+ * - Folders: ~/Documents/MessyNotes/folders.json
  * - Graph: ~/Documents/MessyNotes/graph.json
  * - Canvas: ~/Documents/MessyNotes/canvas/{id}.json
  * 
@@ -52,12 +53,13 @@ class FileService {
     try {
       return await invoke('create_note', {
         title: data.title,
-        rawText: data.rawText || '',  // Ensure rawText is always set
+        rawText: data.rawText || '',
         content: data.content,
         sticky: data.sticky,
         ephemeral: data.ephemeral,
         noteType: data.type,
         color: data.color,
+        folderId: data.folderId || null,
       });
     } catch (error) {
       console.error('Failed to create note:', error);
@@ -70,11 +72,12 @@ class FileService {
       return await invoke('update_note', {
         id,
         title: updates.title,
-        rawText: updates.rawText || updates.plainText || '',  // Support both field names, default to empty
+        rawText: updates.rawText || updates.plainText || '',
         content: updates.content,
         sticky: updates.sticky,
         ephemeral: updates.ephemeral,
         archived: updates.archived,
+        folderId: updates.folderId !== undefined ? updates.folderId : null,
       });
     } catch (error) {
       console.error('Failed to update note:', error);
@@ -96,6 +99,49 @@ class FileService {
       return await invoke('delete_all_notes');
     } catch (error) {
       console.error('Failed to delete all notes:', error);
+      throw error;
+    }
+  }
+
+  // ==================== FOLDERS ====================
+  
+  async getFolders() {
+    try {
+      return await invoke('get_folders');
+    } catch (error) {
+      console.error('Failed to get folders:', error);
+      return [];
+    }
+  }
+
+  async createFolder(name, parentId = null) {
+    try {
+      return await invoke('create_folder', { name, parentId });
+    } catch (error) {
+      console.error('Failed to create folder:', error);
+      throw error;
+    }
+  }
+
+  async updateFolder(id, updates) {
+    try {
+      return await invoke('update_folder', {
+        id,
+        name: updates.name,
+        parentId: updates.parentId !== undefined ? updates.parentId : null,
+        expanded: updates.expanded,
+      });
+    } catch (error) {
+      console.error('Failed to update folder:', error);
+      throw error;
+    }
+  }
+
+  async deleteFolder(id) {
+    try {
+      await invoke('delete_folder', { id });
+    } catch (error) {
+      console.error('Failed to delete folder:', error);
       throw error;
     }
   }

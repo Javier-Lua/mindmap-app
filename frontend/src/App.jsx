@@ -1,236 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
-import { 
-  FileText, Home, Network, Search, Plus, Folder, 
-  ChevronRight, ChevronDown, LayoutGrid, Zap, RefreshCw, Loader, Trash2, Edit3, X, Check, FolderPlus,
-  Star, Clock
-} from 'lucide-react';
+import { Loader } from 'lucide-react';
 
 import EditorPage from './components/EditorPage';
 import MessyMap from './components/MessyMap';
 import Dashboard from './components/Dashboard';
 import QuickCapture from './components/QuickCapture';
+import Sidebar from './components/Sidebar';
 import { NotesProvider, useNotes } from './contexts/NotesContext';
-
-function Sidebar({ currentNoteId, onSelectNote, onNewNote }) {
-  const { notes, loadNotes, deleteNote, lastSync, initialized } = useNotes();
-  const [searchQuery, setSearchQuery] = useState('');
-  const [activeSection, setActiveSection] = useState('recent');
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    if (!initialized) return;
-    
-    const now = Date.now();
-    const isStale = !lastSync || (now - lastSync) > 5000;
-    
-    if (isStale && notes.length === 0 && !lastSync) {
-      loadNotes(true);
-    }
-
-    const interval = setInterval(() => {
-      loadNotes(false);
-    }, 30000);
-    
-    return () => clearInterval(interval);
-  }, [loadNotes, lastSync, notes.length, initialized]);
-
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    await loadNotes(false);
-    setIsRefreshing(false);
-  };
-
-  const handleDeleteNote = async (noteId, e) => {
-    e.stopPropagation();
-    e.preventDefault(); // Prevent any default behavior
-    
-    if (!confirm('Delete this note?')) return;
-    
-    await deleteNote(noteId);
-    
-    if (currentNoteId === noteId) {
-      navigate('/');
-    }
-  };
-
-  const handleNoteClick = (noteId, e) => {
-    // Don't navigate if clicking the delete button
-    if (e.target.closest('.delete-button')) {
-      return;
-    }
-    
-    // Don't re-navigate if already on this note
-    if (currentNoteId === noteId) {
-      return;
-    }
-    
-    // Navigate to the note
-    onSelectNote(noteId);
-  };
-
-  const filteredNotes = notes
-    .filter(n => n.title.toLowerCase().includes(searchQuery.toLowerCase()));
-
-  const recentNotes = filteredNotes.slice(0, 10);
-  const stickyNotes = filteredNotes.filter(n => n.sticky);
-  const ephemeralNotes = filteredNotes.filter(n => n.ephemeral);
-
-  const getDisplayNotes = () => {
-    switch (activeSection) {
-      case 'sticky': 
-        return filteredNotes.filter(n => n.sticky);
-      case 'ephemeral': 
-        return filteredNotes.filter(n => n.ephemeral);
-      case 'recent':
-      default: 
-        return filteredNotes.slice(0, 10);
-    }
-  };
-
-  return (
-    <div className="w-64 h-screen sidebar-themed flex flex-col">
-      <div className="p-4 border-b border-theme-primary">
-        <div className="flex items-center justify-between mb-3">
-          <h1 className="text-sm font-semibold text-theme-primary">Messy Notes</h1>
-          <button
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-            className="p-1.5 theme-bg-hover rounded transition-colors disabled:opacity-50"
-            title="Refresh"
-          >
-            <RefreshCw size={14} className={`text-theme-secondary ${isRefreshing ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
-        
-        <div className="relative">
-          <Search size={12} className="absolute left-2 top-2 text-theme-tertiary" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search notes..."
-            className="w-full pl-7 pr-2 py-1.5 input-themed rounded text-xs"
-          />
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-2 space-y-1">
-          <button
-            onClick={onNewNote}
-            className="w-full flex items-center gap-2 px-2 py-1.5 theme-bg-hover rounded text-xs text-left transition-colors text-theme-primary"
-          >
-            <Plus size={14} className="text-blue-400" />
-            <span>New Note</span>
-          </button>
-          
-          <button
-            onClick={() => navigate('/dashboard')}
-            className="w-full flex items-center gap-2 px-2 py-1.5 theme-bg-hover rounded text-xs text-left transition-colors text-theme-primary"
-          >
-            <LayoutGrid size={14} className="text-purple-400" />
-            <span>Dashboard</span>
-          </button>
-          
-          <button
-            onClick={() => navigate('/mindmap')}
-            className="w-full flex items-center gap-2 px-2 py-1.5 theme-bg-hover rounded text-xs text-left transition-colors text-theme-primary"
-          >
-            <Network size={14} className="text-green-400" />
-            <span>Mindmap</span>
-          </button>
-        </div>
-
-        <div className="h-px border-theme-primary my-2" />
-
-        <div className="px-2 space-y-1">
-          <button
-            onClick={() => setActiveSection('recent')}
-            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors ${
-              activeSection === 'recent' ? 'bg-theme-tertiary text-theme-primary' : 'theme-bg-hover text-theme-secondary'
-            }`}
-          >
-            <Clock size={14} />
-            <span>Recent</span>
-            <span className="ml-auto text-[10px] text-theme-tertiary">{recentNotes.length}</span>
-          </button>
-          
-          <button
-            onClick={() => setActiveSection('sticky')}
-            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors ${
-              activeSection === 'sticky' ? 'bg-theme-tertiary text-theme-primary' : 'theme-bg-hover text-theme-secondary'
-            }`}
-          >
-            <Star size={14} className="text-yellow-400" />
-            <span>Pinned</span>
-            <span className="ml-auto text-[10px] text-theme-tertiary">{stickyNotes.length}</span>
-          </button>
-          
-          <button
-            onClick={() => setActiveSection('ephemeral')}
-            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors ${
-              activeSection === 'ephemeral' ? 'bg-theme-tertiary text-theme-primary' : 'theme-bg-hover text-theme-secondary'
-            }`}
-          >
-            <Zap size={14} className="text-gray-400" />
-            <span>Quick Notes</span>
-            <span className="ml-auto text-[10px] text-theme-tertiary">{ephemeralNotes.length}</span>
-          </button>
-        </div>
-
-        <div className="h-px border-theme-primary my-2" />
-
-        <div className="px-2 pb-4">
-          <div className="text-[10px] uppercase tracking-wider text-theme-tertiary px-2 py-1 mb-1">
-            Notes
-          </div>
-          
-          {getDisplayNotes().map(note => (
-            <button
-              key={note.id}
-              onClick={(e) => handleNoteClick(note.id, e)}
-              className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors group ${
-                currentNoteId === note.id ? 'bg-theme-tertiary text-theme-primary ring-2 ring-purple-500 ring-opacity-30' : 'theme-bg-hover text-theme-secondary'
-              }`}
-            >
-              <FileText size={12} className={note.sticky ? 'text-yellow-400' : 'text-theme-tertiary'} />
-              <div className="flex-1 min-w-0">
-                <div className="truncate">{note.title}</div>
-                <div className="text-[10px] text-theme-tertiary">
-                  {new Date(note.updatedAt).toLocaleDateString()}
-                </div>
-              </div>
-              {note.sticky && <Star size={10} className="text-yellow-400" fill="currentColor" />}
-              {note.ephemeral && <Zap size={10} className="text-theme-tertiary" />}
-              <div
-                onClick={(e) => handleDeleteNote(note.id, e)}
-                className="delete-button opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-600 rounded transition-opacity cursor-pointer"
-                title="Delete"
-              >
-                <Trash2 size={10} className="text-red-400" />
-              </div>
-            </button>
-          ))}
-          
-          {getDisplayNotes().length === 0 && (
-            <div className="px-2 py-4 text-center text-xs text-theme-tertiary">
-              No notes found
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function EmptyState({ onNewNote }) {
   return (
     <div className="min-h-screen flex items-center justify-center theme-bg-primary">
       <div className="text-center max-w-md mx-4">
         <div className="w-24 h-24 mx-auto mb-6 bg-gradient-to-br from-purple-500 to-blue-500 rounded-full flex items-center justify-center">
-          <FileText size={48} className="text-white" />
+          <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
         </div>
         <h1 className="text-3xl font-bold theme-text-primary mb-3">
           Start Your Messy Thinking
@@ -240,9 +27,12 @@ function EmptyState({ onNewNote }) {
         </p>
         <button
           onClick={onNewNote}
-          className="px-8 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:shadow-lg transition-all duration-200 font-medium text-lg"
+          className="px-8 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:shadow-lg transition-all duration-200 font-medium text-lg inline-flex items-center gap-2"
         >
-          <Plus size={20} className="inline mr-2" />
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
           Create First Note
         </button>
         <p className="mt-6 text-sm text-theme-tertiary">
