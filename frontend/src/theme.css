@@ -567,15 +567,19 @@
 
 /* --- Note --- */
 .sb-note {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   min-height: 26px;
-  padding-right: 8px;
   border-radius: 4px;
   cursor: pointer;
   transition: background-color 100ms;
   border-left: 2px solid transparent;
+}
+
+.sb-note-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 8px;
+  width: 100%;
 }
 
 .sb-note:hover {
@@ -591,7 +595,6 @@
 .sb-note-icon {
   flex-shrink: 0;
   color: var(--text-tertiary);
-  /* REMOVED pointer-events: none to allow drag to work */
 }
 
 .sb-note.pinned .sb-note-icon {
@@ -606,7 +609,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  /* REMOVED pointer-events: none to allow drag to work */
 }
 
 /* Visual feedback during drag */

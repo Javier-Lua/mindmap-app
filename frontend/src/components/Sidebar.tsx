@@ -13,8 +13,10 @@ import {
 } from '@dnd-kit/core';
 import {
   SortableContext,
+  useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import {
   FileText, Network, Search, Plus, Folder,
   ChevronRight, LayoutGrid, RefreshCw, Trash2, Edit3,
@@ -52,25 +54,47 @@ interface ContextMenuState {
   id: string;
 }
 
-// Draggable Note Component
-function DraggableNote({ note, depth, isSelected, onClick, onContextMenu }: any) {
+// Sortable Note Component
+function SortableNote({ note, depth, isSelected, onClick, onContextMenu, isDragging }: any) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging: isSortableDragging,
+  } = useSortable({ id: note.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isSortableDragging ? 0.4 : 1,
+  };
+
   const isPinned = note.sticky;
 
   return (
     <div
-      style={{ paddingLeft: `${depth * 16 + 20}px` }}
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
       onClick={() => onClick()}
       onContextMenu={onContextMenu}
       className={`sb-note${isSelected ? ' selected' : ''}${isPinned ? ' pinned' : ''}`}
+      data-note-id={note.id}
+      data-depth={depth}
     >
-      <FileText size={14} className="sb-note-icon" />
-      <span className="sb-note-title">{note.title}</span>
+      <div style={{ paddingLeft: `${depth * 16 + 20}px` }} className="sb-note-content">
+        <FileText size={14} className="sb-note-icon" />
+        <span className="sb-note-title">{note.title}</span>
+      </div>
     </div>
   );
 }
 
-// Draggable Folder Component
-function DraggableFolder({
+// Sortable Folder Component
+function SortableFolder({
   folder,
   depth,
   isExpanded,
@@ -83,17 +107,36 @@ function DraggableFolder({
   onContextMenu,
   children
 }: any) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: folder.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
+
   const folderColor = getFolderColor(folder.id);
 
   return (
-    <div>
+    <div ref={setNodeRef} style={style}>
       <div
+        {...attributes}
+        {...listeners}
         style={{ paddingLeft: `${depth * 16 + 4}px` }}
         onClick={(e) => {
           if (!isEditing) onToggle(e);
         }}
         onContextMenu={onContextMenu}
         className="sb-folder"
+        data-folder-id={folder.id}
+        data-depth={depth}
       >
         <ChevronRight
           size={14}
@@ -121,7 +164,7 @@ function DraggableFolder({
         <span className="sb-folder-badge">{folder.notes.length}</span>
       </div>
 
-      {isExpanded && children}
+      {isExpanded && <div>{children}</div>}
     </div>
   );
 }
@@ -145,17 +188,15 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }: SidebarProps) {
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
-  const [dropPosition, setDropPosition] = useState<'before' | 'after' | 'inside' | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
-  const expandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // dnd-kit sensors - using PointerSensor for better Tauri compatibility
+  // dnd-kit sensors
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 8, // 8px movement required before drag starts
+        distance: 8,
       },
     })
   );
@@ -316,86 +357,28 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }: SidebarProps) {
     
     if (!over) {
       setOverId(null);
-      setDropPosition(null);
-      if (expandTimerRef.current) {
-        clearTimeout(expandTimerRef.current);
-        expandTimerRef.current = null;
-      }
       return;
     }
 
     const overId = over.id as string;
     setOverId(overId);
 
-    // Determine drop position based on the drag position
-    const overRect = over.rect;
-    if (overRect) {
-      const overMiddleY = overRect.top + overRect.height / 2;
-      const activatorEvent = event.activatorEvent as MouseEvent | PointerEvent;
-      const pointerY = activatorEvent.clientY;
-
-      // Check if over is a folder
-      const overFolder = folders.find(f => f.id === overId);
-      
-      if (overFolder) {
-        // For folders: inside (middle), before (top), after (bottom)
-        const topThreshold = overRect.top + overRect.height * 0.25;
-        const bottomThreshold = overRect.top + overRect.height * 0.75;
-        
-        if (pointerY < topThreshold) {
-          setDropPosition('before');
-        } else if (pointerY > bottomThreshold) {
-          setDropPosition('after');
-        } else {
-          setDropPosition('inside');
-          // Auto-expand folder after hovering
-          if (expandTimerRef.current) {
-            clearTimeout(expandTimerRef.current);
-          }
-          expandTimerRef.current = setTimeout(() => {
-            setExpandedFolders(prev => {
-              if (prev.has(overId)) return prev;
-              const next = new Set(prev);
-              next.add(overId);
-              updateFolder(overId, { expanded: true });
-              return next;
-            });
-          }, 600);
-        }
-      } else {
-        // For notes: before or after only
-        setDropPosition(pointerY < overMiddleY ? 'before' : 'after');
-        if (expandTimerRef.current) {
-          clearTimeout(expandTimerRef.current);
-          expandTimerRef.current = null;
-        }
-      }
-    }
-
-    console.log('🎯 DragOver:', active.id, '→', overId, dropPosition);
-  }, [folders, dropPosition, updateFolder]);
+    console.log('🎯 DragOver:', active.id, '→', overId);
+  }, []);
 
   const handleDragEnd = useCallback(async (event: DragEndEvent) => {
     const { active, over } = event;
 
-    console.log('📦 DragEnd:', active.id, '→', over?.id, dropPosition);
-
-    if (expandTimerRef.current) {
-      clearTimeout(expandTimerRef.current);
-      expandTimerRef.current = null;
-    }
+    console.log('📦 DragEnd:', active.id, '→', over?.id);
 
     setActiveId(null);
     setOverId(null);
-    setDropPosition(null);
 
-    if (!over) return;
+    if (!over || active.id === over.id) return;
 
     const draggedId = active.id as string;
     const targetId = over.id as string;
     
-    if (draggedId === targetId) return;
-
     const draggedNote = notes.find(n => n.id === draggedId);
     const draggedFolder = folders.find(f => f.id === draggedId);
     const targetNote = notes.find(n => n.id === targetId);
@@ -404,9 +387,12 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }: SidebarProps) {
     try {
       if (draggedNote) {
         // Dragging a note
-        if (targetFolder && dropPosition === 'inside') {
-          // Move note into folder
+        if (targetFolder) {
+          // Drop onto folder - move into folder
+          console.log('📌 Moving note into folder:', draggedId, '→', targetId);
           await moveNoteToFolder(draggedId, targetId);
+          
+          // Expand the folder
           setExpandedFolders(prev => {
             const next = new Set(prev);
             next.add(targetId);
@@ -414,72 +400,73 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }: SidebarProps) {
           });
           updateFolder(targetId, { expanded: true });
         } else if (targetNote) {
-          // Reorder note relative to another note
+          // Drop onto another note - reorder
           const targetFolderId = targetNote.folderId || null;
           const folderNotes = notes
             .filter(n => (n.folderId || null) === targetFolderId)
             .sort((a, b) => (a.position || 0) - (b.position || 0));
+          
           const targetIndex = folderNotes.findIndex(n => n.id === targetId);
           if (targetIndex === -1) return;
-          let newPosition = dropPosition === 'before' ? targetIndex : targetIndex + 1;
-          const draggedIndex = folderNotes.findIndex(n => n.id === draggedId);
-          if (draggedIndex !== -1 && draggedIndex < newPosition) newPosition--;
-          await reorderNotes(draggedId, targetFolderId, newPosition);
-        } else if (targetFolder) {
-          // Move note to same level as folder (before/after)
-          await moveNoteToFolder(draggedId, targetFolder.parentId || null);
+          
+          console.log('📌 Reordering note:', draggedId, 'to position', targetIndex, 'in folder', targetFolderId);
+          await reorderNotes(draggedId, targetFolderId, targetIndex);
         }
       } else if (draggedFolder) {
         // Dragging a folder
-        if (targetFolder && dropPosition === 'inside') {
-          // Move folder into another folder
-          if (draggedId === targetId) return;
+        if (targetFolder) {
           // Check for circular reference
+          if (draggedId === targetId) return;
           let isDescendant = false;
           let checkFolder = targetFolder;
           while (checkFolder && checkFolder.parentId) {
-            if (checkFolder.parentId === draggedId) { isDescendant = true; break; }
+            if (checkFolder.parentId === draggedId) {
+              isDescendant = true;
+              break;
+            }
             checkFolder = folders.find(f => f.id === checkFolder!.parentId!)!;
           }
+          
           if (isDescendant) {
             alert('Cannot move a folder into its own subfolder');
             return;
           }
+
+          // Move folder into target folder
+          console.log('📌 Moving folder into folder:', draggedId, '→', targetId);
           await updateFolder(draggedId, { parentId: targetId });
+          
+          // Expand target folder
           setExpandedFolders(prev => {
             const next = new Set(prev);
             next.add(targetId);
             return next;
           });
           updateFolder(targetId, { expanded: true });
-        } else if (targetFolder) {
-          // Move folder to same level as target folder
-          await updateFolder(draggedId, { parentId: targetFolder.parentId || null });
         } else if (targetNote && targetNote.folderId) {
           // Move folder to same level as note's folder
           const noteFolder = folders.find(f => f.id === targetNote.folderId!);
+          console.log('📌 Moving folder to same level as note folder:', draggedId, '→', noteFolder?.parentId);
           await updateFolder(draggedId, { parentId: noteFolder?.parentId || null });
         } else {
           // Move to root
+          console.log('📌 Moving folder to root:', draggedId);
           await updateFolder(draggedId, { parentId: null });
         }
       }
+      
+      // Reload to get updated positions
       await Promise.all([loadNotes(false), loadFolders()]);
     } catch (error) {
       console.error('Drop failed:', error);
       alert('Failed to move item: ' + (error as Error).message);
       await Promise.all([loadNotes(false), loadFolders()]);
     }
-  }, [dropPosition, notes, folders, moveNoteToFolder, reorderNotes, updateFolder, loadNotes, loadFolders]);
+  }, [notes, folders, moveNoteToFolder, reorderNotes, updateFolder, loadNotes, loadFolders]);
 
   const handleDragCancel = useCallback(() => {
     setActiveId(null);
     setOverId(null);
-    setDropPosition(null);
-    if (expandTimerRef.current) {
-      clearTimeout(expandTimerRef.current);
-      expandTimerRef.current = null;
-    }
   }, []);
 
   const buildFileTree = (): FileTreeItem[] => {
@@ -536,7 +523,7 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }: SidebarProps) {
   const fileTree = buildFileTree();
   const pinnedNotes = notes.filter(n => n.sticky && n.title.toLowerCase().includes(searchQuery.toLowerCase()));
 
-  // Get all sortable IDs (notes and folders at all levels)
+  // Get all sortable IDs (flat list)
   const getAllIds = (items: FileTreeItem[]): string[] => {
     const ids: string[] = [];
     items.forEach(item => {
@@ -554,28 +541,17 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }: SidebarProps) {
   const renderNote = (note: FileTreeNote, depth = 0) => {
     const isSelected = currentNoteId === note.id;
     const isDragging = activeId === note.id;
-    const isOver = overId === note.id;
-
-    let dropIndicatorClass = '';
-    if (isOver && dropPosition) {
-      if (dropPosition === 'before') dropIndicatorClass = 'sb-drop-before';
-      else if (dropPosition === 'after') dropIndicatorClass = 'sb-drop-after';
-    }
 
     return (
-      <div
+      <SortableNote
         key={note.id}
-        data-drag-id={note.id}
-        className={`${dropIndicatorClass} ${isDragging ? 'opacity-40' : ''}`}
-      >
-        <DraggableNote
-          note={note}
-          depth={depth}
-          isSelected={isSelected}
-          onClick={() => handleNoteClick(note.id)}
-          onContextMenu={(e: React.MouseEvent) => handleContextMenu(e, 'note', note.id)}
-        />
-      </div>
+        note={note}
+        depth={depth}
+        isSelected={isSelected}
+        isDragging={isDragging}
+        onClick={() => handleNoteClick(note.id)}
+        onContextMenu={(e: React.MouseEvent) => handleContextMenu(e, 'note', note.id)}
+      />
     );
   };
 
@@ -599,46 +575,34 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }: SidebarProps) {
     const isExpanded = expandedFolders.has(folder.id);
     const isEditing = editingFolderId === folder.id;
     const isDragging = activeId === folder.id;
-    const isOver = overId === folder.id;
-
-    let dropIndicatorClass = '';
-    if (isOver && dropPosition) {
-      if (dropPosition === 'before') dropIndicatorClass = 'sb-drop-before';
-      else if (dropPosition === 'after') dropIndicatorClass = 'sb-drop-after';
-      else if (dropPosition === 'inside') dropIndicatorClass = 'sb-drop-inside';
-    }
 
     return (
-      <div key={folder.id} className={isDragging ? 'opacity-40' : ''}>
-        <div data-drag-id={folder.id} className={dropIndicatorClass}>
-          <DraggableFolder
-            folder={folder}
-            depth={depth}
-            isExpanded={isExpanded}
-            isEditing={isEditing}
-            editingFolderName={editingFolderName}
-            onToggle={(e: React.MouseEvent) => toggleFolder(folder.id, e)}
-            onEditChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditingFolderName(e.target.value)}
-            onEditBlur={() => handleRenameFolder(folder.id)}
-            onEditKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
-              if (e.key === 'Enter') handleRenameFolder(folder.id);
-              if (e.key === 'Escape') { setEditingFolderId(null); setEditingFolderName(''); }
-              e.stopPropagation();
-            }}
-            onContextMenu={(e: React.MouseEvent) => handleContextMenu(e, 'folder', folder.id)}
-          >
-            <div>
-              {folder.children.map(child => renderFolder(child, depth + 1))}
-              {folder.notes.map(note => renderNote(note, depth + 1))}
-              {folder.notes.length === 0 && folder.children.length === 0 && (
-                <div className="sb-empty-folder" style={{ paddingLeft: `${(depth + 1) * 16 + 20}px` }}>
-                  No items
-                </div>
-              )}
-            </div>
-          </DraggableFolder>
-        </div>
-      </div>
+      <SortableFolder
+        key={folder.id}
+        folder={folder}
+        depth={depth}
+        isExpanded={isExpanded}
+        isEditing={isEditing}
+        isDragging={isDragging}
+        editingFolderName={editingFolderName}
+        onToggle={(e: React.MouseEvent) => toggleFolder(folder.id, e)}
+        onEditChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditingFolderName(e.target.value)}
+        onEditBlur={() => handleRenameFolder(folder.id)}
+        onEditKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+          if (e.key === 'Enter') handleRenameFolder(folder.id);
+          if (e.key === 'Escape') { setEditingFolderId(null); setEditingFolderName(''); }
+          e.stopPropagation();
+        }}
+        onContextMenu={(e: React.MouseEvent) => handleContextMenu(e, 'folder', folder.id)}
+      >
+        {folder.children.map(child => renderFolder(child, depth + 1))}
+        {folder.notes.map(note => renderNote(note, depth + 1))}
+        {folder.notes.length === 0 && folder.children.length === 0 && (
+          <div className="sb-empty-folder" style={{ paddingLeft: `${(depth + 1) * 16 + 20}px` }}>
+            No items
+          </div>
+        )}
+      </SortableFolder>
     );
   };
 
@@ -866,7 +830,7 @@ function Sidebar({ currentNoteId, onSelectNote, onNewNote }: SidebarProps) {
 
       <DragOverlay>
         {activeItem && (
-          <div className="sb-note opacity-80 bg-theme-card shadow-lg">
+          <div className="sb-note opacity-80 bg-theme-card shadow-lg" style={{ paddingLeft: '20px' }}>
             <FileText size={14} className="sb-note-icon" />
             <span className="sb-note-title">
               {'title' in activeItem ? activeItem.title : 'name' in activeItem ? activeItem.name : ''}
