@@ -517,10 +517,12 @@
   background-color: var(--bg-hover);
 }
 
+/* CRITICAL FIX: Allow drag events to work on chevron */
 .sb-chevron {
   transition: transform 150ms ease;
   color: var(--text-tertiary);
   flex-shrink: 0;
+  /* REMOVED pointer-events: none to allow drag to work */
 }
 
 .sb-chevron.expanded {
@@ -535,14 +537,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  pointer-events: none;
+  /* REMOVED pointer-events: none to allow drag to work */
 }
 
 .sb-folder-badge {
   font-size: 10px;
   color: var(--text-tertiary);
   flex-shrink: 0;
-  pointer-events: none;
+  /* REMOVED pointer-events: none to allow drag to work */
 }
 
 .sb-rename-input {
@@ -585,16 +587,18 @@
   border-left-color: var(--accent-blue);
 }
 
+/* CRITICAL FIX: Allow drag events to work on icon */
 .sb-note-icon {
   flex-shrink: 0;
   color: var(--text-tertiary);
-  pointer-events: none;
+  /* REMOVED pointer-events: none to allow drag to work */
 }
 
 .sb-note.pinned .sb-note-icon {
   color: var(--accent-yellow);
 }
 
+/* CRITICAL FIX: Allow drag events to work on title */
 .sb-note-title {
   flex: 1;
   font-size: 12px;
@@ -602,7 +606,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  pointer-events: none;
+  /* REMOVED pointer-events: none to allow drag to work */
+}
+
+/* Visual feedback during drag */
+.sb-note.dragging,
+.sb-folder.dragging {
+  opacity: 0.4;
 }
 
 /* --- Drag & Drop Indicators (VSCode-style lines) --- */
