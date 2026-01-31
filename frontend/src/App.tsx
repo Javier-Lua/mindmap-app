@@ -9,7 +9,11 @@ import QuickCapture from './components/QuickCapture';
 import Sidebar from './components/Sidebar';
 import { NotesProvider, useNotes } from './contexts/NotesContext';
 
-function EmptyState({ onNewNote }) {
+interface EmptyStateProps {
+  onNewNote: () => void;
+}
+
+function EmptyState({ onNewNote }: EmptyStateProps) {
   return (
     <div className="min-h-screen flex items-center justify-center theme-bg-primary">
       <div className="text-center max-w-md mx-4">
@@ -46,9 +50,9 @@ function EmptyState({ onNewNote }) {
 function MainLayout() {
   const { notes, createNote, initialized } = useNotes();
   const [showQuickCapture, setShowQuickCapture] = useState(false);
-  const [currentNoteId, setCurrentNoteId] = useState(null);
+  const [currentNoteId, setCurrentNoteId] = useState<string | null>(null);
   const [isCreatingNote, setIsCreatingNote] = useState(false);
-  
+
   const navigate = useNavigate();
   const params = useParams();
 
@@ -61,7 +65,7 @@ function MainLayout() {
   }, [params.id]);
 
   useEffect(() => {
-    const handleKeyDown = (e) => {
+    const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         e.preventDefault();
         setShowQuickCapture(true);
@@ -78,7 +82,7 @@ function MainLayout() {
 
   const handleNewNote = async () => {
     if (isCreatingNote) return;
-    
+
     setIsCreatingNote(true);
     try {
       const newNote = await createNote({});
@@ -91,7 +95,7 @@ function MainLayout() {
     }
   };
 
-  const handleSelectNote = (noteId) => {
+  const handleSelectNote = (noteId: string) => {
     if (currentNoteId === noteId) return;
     navigate(`/note/${noteId}`);
     setCurrentNoteId(noteId);
@@ -119,7 +123,7 @@ function MainLayout() {
         onSelectNote={handleSelectNote}
         onNewNote={handleNewNote}
       />
-      
+
       <div className="flex-1 overflow-hidden relative">
         {isCreatingNote && (
           <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -129,17 +133,17 @@ function MainLayout() {
             </div>
           </div>
         )}
-        
+
         <Routes>
-          <Route 
-            path="/" 
+          <Route
+            path="/"
             element={
               notes.length === 0 ? (
                 <EmptyState onNewNote={handleNewNote} />
               ) : (
                 <Navigate to={`/note/${notes[0].id}`} replace />
               )
-            } 
+            }
           />
           <Route path="/note/:id" element={<EditorPage />} />
           <Route path="/dashboard" element={<Dashboard />} />
@@ -156,7 +160,7 @@ function MainLayout() {
 }
 
 export default function App() {
-  const [theme, setTheme] = useState(() => {
+  const [theme, setTheme] = useState<string>(() => {
     return localStorage.getItem('theme') || 'dark';
   });
 

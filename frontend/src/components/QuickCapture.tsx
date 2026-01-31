@@ -2,17 +2,31 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Zap, X, Mic, MicOff, Image, Paperclip, Type } from 'lucide-react';
 import { useNotes } from '../contexts/NotesContext';
 
-export default function QuickCapture({ onClose }) {
+interface QuickCaptureProps {
+  onClose: () => void;
+}
+
+type CaptureMode = 'text' | 'image' | 'audio' | 'link';
+
+// Extend the global Window interface for speech recognition
+declare global {
+  interface Window {
+    SpeechRecognition: any;
+    webkitSpeechRecognition: any;
+  }
+}
+
+export default function QuickCapture({ onClose }: QuickCaptureProps) {
   const { createNote } = useNotes();
-  const [mode, setMode] = useState('text');
+  const [mode, setMode] = useState<CaptureMode>('text');
   const [text, setText] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [file, setFile] = useState(null);
-  const [previewUrl, setPreviewUrl] = useState(null);
-  const inputRef = useRef(null);
-  const fileInputRef = useRef(null);
-  const recognitionRef = useRef(null);
+  const [file, setFile] = useState<File | Blob | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -23,7 +37,7 @@ export default function QuickCapture({ onClose }) {
       recognitionRef.current.continuous = false;
       recognitionRef.current.interimResults = false;
 
-      recognitionRef.current.onresult = (event) => {
+      recognitionRef.current.onresult = (event: any) => {
         const transcript = event.results[0][0].transcript;
         setText(prev => prev ? `${prev} ${transcript}` : transcript);
       };
@@ -55,26 +69,28 @@ export default function QuickCapture({ onClose }) {
     };
   }, []);
 
-  const handlePaste = (e) => {
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData.items;
     for (const item of items) {
       if (item.type.indexOf('image') !== -1) {
         e.preventDefault();
         const blob = item.getAsFile();
-        setMode('image');
-        setFile(blob);
-        setPreviewUrl(URL.createObjectURL(blob));
+        if (blob) {
+          setMode('image');
+          setFile(blob);
+          setPreviewUrl(URL.createObjectURL(blob));
+        }
         break;
       }
     }
   };
 
-  const handleFileSelect = (e) => {
-    const selectedFile = e.target.files[0];
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
 
     setFile(selectedFile);
-    
+
     if (selectedFile.type.startsWith('image/')) {
       setMode('image');
       setPreviewUrl(URL.createObjectURL(selectedFile));
@@ -86,15 +102,15 @@ export default function QuickCapture({ onClose }) {
     }
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e?: React.FormEvent | React.KeyboardEvent) => {
     e?.preventDefault();
     e?.stopPropagation();
-    
+
     // Prevent any form of double submission
     if (isSaving) {
       return;
     }
-    
+
     if (!text.trim() && !file) {
       return;
     }
@@ -103,7 +119,7 @@ export default function QuickCapture({ onClose }) {
 
     try {
       const title = text.split('\n')[0].slice(0, 50) || 'Quick thought';
-      
+
       // Use the context's createNote which handles everything properly
       await createNote({
         title,
@@ -117,9 +133,7 @@ export default function QuickCapture({ onClose }) {
             }
           ]
         },
-        ephemeral: true,
-        x: Math.random() * 500,
-        y: Math.random() * 500
+        ephemeral: true
       });
 
       // Close immediately after successful save
@@ -214,9 +228,9 @@ export default function QuickCapture({ onClose }) {
         <form onSubmit={handleSubmit} className="p-5">
           {mode === 'image' && previewUrl && (
             <div className="mb-4 relative">
-              <img 
-                src={previewUrl} 
-                alt="Preview" 
+              <img
+                src={previewUrl}
+                alt="Preview"
                 className="max-h-64 mx-auto rounded-lg shadow-md"
               />
               <button
@@ -337,7 +351,7 @@ export default function QuickCapture({ onClose }) {
           from { opacity: 0; }
           to { opacity: 1; }
         }
-        
+
         @keyframes slideDown {
           from {
             opacity: 0;
@@ -348,11 +362,11 @@ export default function QuickCapture({ onClose }) {
             transform: translateY(0);
           }
         }
-        
+
         .animate-fadeIn {
           animation: fadeIn 0.2s ease-out;
         }
-        
+
         .animate-slideDown {
           animation: slideDown 0.3s ease-out;
         }

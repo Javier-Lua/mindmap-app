@@ -1,26 +1,56 @@
 import { invoke } from '@tauri-apps/api/tauri';
+import type { Note, Folder, GraphData, GraphMetadata, Edge, CanvasData, CanvasNode } from '../types';
 
 /**
  * ====== FILE SERVICE ======
- * 
+ *
  * This service handles all file operations with the Tauri backend.
- * 
+ *
  * Files are stored in:
  * - Notes: ~/Documents/MessyNotes/notes/{id}.md
  * - Folders: ~/Documents/MessyNotes/folders.json
  * - Graph: ~/Documents/MessyNotes/graph.json
  * - Canvas: ~/Documents/MessyNotes/canvas/{id}.json
- * 
+ *
  * All operations are synchronous file I/O on the user's local disk.
  * No network requests, no cloud sync.
- * 
+ *
  * ==========================
  */
 
+interface CreateNoteData {
+  title?: string;
+  rawText?: string;
+  content?: any;
+  sticky?: boolean;
+  ephemeral?: boolean;
+  type?: string;
+  color?: string;
+  folderId?: string | null;
+}
+
+interface UpdateNoteData {
+  title?: string;
+  rawText?: string;
+  plainText?: string;
+  content?: any;
+  sticky?: boolean;
+  ephemeral?: boolean;
+  archived?: boolean;
+  folderId?: string | null;
+  position?: number;
+}
+
+interface UpdateFolderData {
+  name?: string;
+  parentId?: string | null;
+  expanded?: boolean;
+}
+
 class FileService {
-  async init() {
+  async init(): Promise<string> {
     try {
-      const dataDir = await invoke('init_app');
+      const dataDir = await invoke<string>('init_app');
       console.log('App initialized, data directory:', dataDir);
       return dataDir;
     } catch (error) {
@@ -30,28 +60,28 @@ class FileService {
   }
 
   // ==================== NOTES ====================
-  
-  async getNotes() {
+
+  async getNotes(): Promise<Note[]> {
     try {
-      return await invoke('get_notes');
+      return await invoke<Note[]>('get_notes');
     } catch (error) {
       console.error('Failed to get notes:', error);
       throw error;
     }
   }
 
-  async getNote(id) {
+  async getNote(id: string): Promise<Note> {
     try {
-      return await invoke('get_note', { id });
+      return await invoke<Note>('get_note', { id });
     } catch (error) {
       console.error('Failed to get note:', error);
       throw error;
     }
   }
 
-  async createNote(data) {
+  async createNote(data: CreateNoteData = {}): Promise<Note> {
     try {
-      return await invoke('create_note', {
+      return await invoke<Note>('create_note', {
         title: data.title,
         rawText: data.rawText || '',
         content: data.content,
@@ -67,9 +97,9 @@ class FileService {
     }
   }
 
-  async updateNote(id, updates) {
+  async updateNote(id: string, updates: UpdateNoteData): Promise<Note> {
     try {
-      return await invoke('update_note', {
+      return await invoke<Note>('update_note', {
         id,
         title: updates.title,
         rawText: updates.rawText || updates.plainText || '',
@@ -86,7 +116,7 @@ class FileService {
     }
   }
 
-  async reorderNotes(noteId, targetFolderId, newPosition) {
+  async reorderNotes(noteId: string, targetFolderId: string | null, newPosition: number): Promise<void> {
     try {
       await invoke('reorder_notes', {
         noteId,
@@ -99,7 +129,7 @@ class FileService {
     }
   }
 
-  async deleteNote(id) {
+  async deleteNote(id: string): Promise<void> {
     try {
       await invoke('delete_note', { id });
     } catch (error) {
@@ -108,9 +138,9 @@ class FileService {
     }
   }
 
-  async deleteAllNotes() {
+  async deleteAllNotes(): Promise<void> {
     try {
-      return await invoke('delete_all_notes');
+      await invoke('delete_all_notes');
     } catch (error) {
       console.error('Failed to delete all notes:', error);
       throw error;
@@ -118,28 +148,28 @@ class FileService {
   }
 
   // ==================== FOLDERS ====================
-  
-  async getFolders() {
+
+  async getFolders(): Promise<Folder[]> {
     try {
-      return await invoke('get_folders');
+      return await invoke<Folder[]>('get_folders');
     } catch (error) {
       console.error('Failed to get folders:', error);
       return [];
     }
   }
 
-  async createFolder(name, parentId = null) {
+  async createFolder(name: string, parentId: string | null = null): Promise<Folder> {
     try {
-      return await invoke('create_folder', { name, parentId });
+      return await invoke<Folder>('create_folder', { name, parentId });
     } catch (error) {
       console.error('Failed to create folder:', error);
       throw error;
     }
   }
 
-  async updateFolder(id, updates) {
+  async updateFolder(id: string, updates: UpdateFolderData): Promise<Folder> {
     try {
-      return await invoke('update_folder', {
+      return await invoke<Folder>('update_folder', {
         id,
         name: updates.name,
         parentId: updates.parentId !== undefined ? updates.parentId : null,
@@ -151,7 +181,7 @@ class FileService {
     }
   }
 
-  async deleteFolder(id) {
+  async deleteFolder(id: string): Promise<void> {
     try {
       await invoke('delete_folder', { id });
     } catch (error) {
@@ -161,17 +191,17 @@ class FileService {
   }
 
   // ==================== GRAPH ====================
-  
-  async getGraph() {
+
+  async getGraph(): Promise<GraphData> {
     try {
-      return await invoke('get_graph');
+      return await invoke<GraphData>('get_graph');
     } catch (error) {
       console.error('Failed to get graph:', error);
-      return { nodes: {}, edges: [] };
+      return { metadata: {}, edges: [] };
     }
   }
 
-  async saveGraph(nodes, edges) {
+  async saveGraph(nodes: GraphMetadata, edges: Edge[]): Promise<void> {
     try {
       await invoke('save_graph_data', { nodes, edges });
     } catch (error) {
@@ -181,17 +211,17 @@ class FileService {
   }
 
   // ==================== CANVAS ====================
-  
-  async getCanvas(noteId) {
+
+  async getCanvas(noteId: string): Promise<CanvasData> {
     try {
-      return await invoke('get_canvas', { noteId });
+      return await invoke<CanvasData>('get_canvas', { noteId });
     } catch (error) {
       console.error('Failed to get canvas:', error);
       return { nodes: [], edges: [] };
     }
   }
 
-  async saveCanvas(noteId, nodes, edges) {
+  async saveCanvas(noteId: string, nodes: CanvasNode[], edges: Edge[]): Promise<void> {
     try {
       await invoke('save_canvas_data', { noteId, nodes, edges });
     } catch (error) {

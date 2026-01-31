@@ -1,9 +1,10 @@
-import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useEffect, ReactNode } from 'react';
 import FileService from '../services/FileService';
+import type { Note, Folder, NotesContextType } from '../types';
 
-const NotesContext = createContext(null);
+const NotesContext = createContext<NotesContextType | null>(null);
 
-export const useNotes = () => {
+export const useNotes = (): NotesContextType => {
   const context = useContext(NotesContext);
   if (!context) {
     throw new Error('useNotes must be used within NotesProvider');
@@ -11,11 +12,15 @@ export const useNotes = () => {
   return context;
 };
 
-export const NotesProvider = ({ children }) => {
-  const [notes, setNotes] = useState([]);
-  const [folders, setFolders] = useState([]);
+interface NotesProviderProps {
+  children: ReactNode;
+}
+
+export const NotesProvider: React.FC<NotesProviderProps> = ({ children }) => {
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [lastSync, setLastSync] = useState(null);
+  const [lastSync, setLastSync] = useState<number | null>(null);
   const [initialized, setInitialized] = useState(false);
   const createNoteInProgressRef = useRef(false);
 
@@ -59,13 +64,13 @@ export const NotesProvider = ({ children }) => {
     }
   }, []);
 
-  const getNote = useCallback((noteId) => {
+  const getNote = useCallback((noteId: string): Note | undefined => {
     return notes.find(n => n.id === noteId);
   }, [notes]);
 
-  const updateNoteLocal = useCallback((noteId, updates) => {
+  const updateNoteLocal = useCallback((noteId: string, updates: Partial<Note>) => {
     console.log('🔄 updateNoteLocal called for:', noteId, 'with updates:', updates);
-    
+
     setNotes(prev => {
       const index = prev.findIndex(n => n.id === noteId);
       if (index === -1) {
@@ -91,7 +96,7 @@ export const NotesProvider = ({ children }) => {
     });
   }, []);
 
-  const updateNote = useCallback(async (noteId, updates) => {
+  const updateNote = useCallback(async (noteId: string, updates: Partial<Note>) => {
     // Optimistically update local state first
     updateNoteLocal(noteId, updates);
 
@@ -115,10 +120,10 @@ export const NotesProvider = ({ children }) => {
     }
   }, [updateNoteLocal, loadNotes]);
 
-  const createNote = useCallback(async (data = {}) => {
+  const createNote = useCallback(async (data: Partial<Note> = {}): Promise<Note> => {
     if (createNoteInProgressRef.current) {
       console.warn('Note creation already in progress');
-      return;
+      throw new Error('Note creation already in progress');
     }
 
     createNoteInProgressRef.current = true;
@@ -136,7 +141,7 @@ export const NotesProvider = ({ children }) => {
     }
   }, []);
 
-  const deleteNote = useCallback(async (noteId) => {
+  const deleteNote = useCallback(async (noteId: string) => {
     // Optimistically remove from local state
     setNotes(prev => prev.filter(n => n.id !== noteId));
 
@@ -150,7 +155,7 @@ export const NotesProvider = ({ children }) => {
   }, [loadNotes]);
 
   const deleteAllNotes = useCallback(async () => {
-    let previousNotes = [];
+    let previousNotes: Note[] = [];
     setNotes(prev => {
       previousNotes = prev;
       return [];
@@ -166,7 +171,7 @@ export const NotesProvider = ({ children }) => {
     }
   }, []);
 
-  const createFolder = useCallback(async (name, parentId = null) => {
+  const createFolder = useCallback(async (name: string, parentId: string | null = null): Promise<Folder> => {
     try {
       const newFolder = await FileService.createFolder(name, parentId);
       setFolders(prev => [...prev, newFolder]);
@@ -177,9 +182,9 @@ export const NotesProvider = ({ children }) => {
     }
   }, []);
 
-  const updateFolder = useCallback(async (folderId, updates) => {
+  const updateFolder = useCallback(async (folderId: string, updates: Partial<Folder>) => {
     // Optimistically update local state
-    setFolders(prev => prev.map(f => 
+    setFolders(prev => prev.map(f =>
       f.id === folderId ? { ...f, ...updates } : f
     ));
 
@@ -191,7 +196,7 @@ export const NotesProvider = ({ children }) => {
     }
   }, [loadFolders]);
 
-  const deleteFolder = useCallback(async (folderId) => {
+  const deleteFolder = useCallback(async (folderId: string) => {
     // Optimistically remove from local state
     setFolders(prev => prev.filter(f => f.id !== folderId));
 
@@ -205,7 +210,7 @@ export const NotesProvider = ({ children }) => {
     }
   }, [loadFolders, loadNotes]);
 
-  const moveNoteToFolder = useCallback(async (noteId, folderId) => {
+  const moveNoteToFolder = useCallback(async (noteId: string, folderId: string | null) => {
     try {
       // When moving to a new folder, the backend will assign a new position automatically
       await updateNote(noteId, { folderId });
@@ -215,7 +220,7 @@ export const NotesProvider = ({ children }) => {
     }
   }, [updateNote]);
 
-  const reorderNotes = useCallback(async (noteId, targetFolderId, newPosition) => {
+  const reorderNotes = useCallback(async (noteId: string, targetFolderId: string | null, newPosition: number) => {
     try {
       await FileService.reorderNotes(noteId, targetFolderId, newPosition);
       // Reload notes to get updated positions
@@ -233,7 +238,7 @@ export const NotesProvider = ({ children }) => {
     ]);
   }, [loadNotes, loadFolders]);
 
-  const value = {
+  const value: NotesContextType = {
     notes,
     folders,
     isLoading,
